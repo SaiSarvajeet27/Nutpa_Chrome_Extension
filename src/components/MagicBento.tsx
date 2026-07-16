@@ -87,6 +87,7 @@ const updateCardGlowProperties = (card: HTMLElement, mouseX: number, mouseY: num
   card.style.setProperty('--glow-radius', `${radius}px`);
 };
 
+
 interface ParticleCardProps {
   children: React.ReactNode;
   className?: string;
@@ -97,6 +98,7 @@ interface ParticleCardProps {
   enableTilt?: boolean;
   clickEffect?: boolean;
   enableMagnetism?: boolean;
+  onClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
 }
 
 const ParticleCard: React.FC<ParticleCardProps> = ({
@@ -108,7 +110,8 @@ const ParticleCard: React.FC<ParticleCardProps> = ({
   glowColor = DEFAULT_GLOW_COLOR,
   enableTilt = true,
   clickEffect = false,
-  enableMagnetism = false
+  enableMagnetism = false,
+  onClick
 }) => {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const particlesRef = useRef<HTMLDivElement[]>([]);
@@ -324,10 +327,10 @@ const ParticleCard: React.FC<ParticleCardProps> = ({
       clearAllParticles();
     };
   }, [animateParticles, clearAllParticles, disableAnimations, enableTilt, enableMagnetism, clickEffect, glowColor]);
-
   return (
     <div
       ref={cardRef}
+      onClick={onClick}
       className={`${className} particle-container`}
       style={{ ...style, position: 'relative', overflow: 'hidden' }}
     >
@@ -571,6 +574,13 @@ const MagicBento: React.FC<MagicBentoProps> = ({
                 enableTilt={enableTilt}
                 clickEffect={clickEffect}
                 enableMagnetism={enableMagnetism}
+                onClick={() => {
+                  const tabId = card.label.toLowerCase();
+                  if (['focus', 'notes', 'summary', 'cards'].includes(tabId)) {
+                    const event = new CustomEvent('open-sidebar-tab', { detail: { tabId } });
+                    window.dispatchEvent(event);
+                  }
+                }}
               >
                 <div className="magic-bento-card__header">
                   <div className="magic-bento-card__label">{card.label}</div>
@@ -646,6 +656,12 @@ const MagicBento: React.FC<MagicBentoProps> = ({
                 };
 
                 const handleClick = (e: MouseEvent) => {
+                  const tabId = card.label.toLowerCase();
+                  if (['focus', 'notes', 'summary', 'cards'].includes(tabId)) {
+                    const event = new CustomEvent('open-sidebar-tab', { detail: { tabId } });
+                    window.dispatchEvent(event);
+                  }
+
                   if (!clickEffect || shouldDisableAnimations) return;
 
                   const rect = el.getBoundingClientRect();

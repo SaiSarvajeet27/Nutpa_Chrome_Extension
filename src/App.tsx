@@ -2,13 +2,14 @@ import React from 'react';
 import Sidebar from './components/Sidebar';
 import TargetCursor from './components/TargetCursor';
 import MagicBento from './components/MagicBento';
+import ClickSpark from './components/ClickSpark';
+import DotField from './components/DotField';
 import './index.css';
 
 const MockVideoPlayer: React.FC = () => (
-  <div className="flex-1 flex flex-col items-center justify-center gap-6 pr-[340px] min-h-screen"
-    style={{ background: '#0a0f1e' }}
+  <div className="flex-1 flex flex-col items-center justify-center gap-6 min-h-screen py-10 z-10 relative"
   >
-    {/* Mock YouTube-like player */}
+    {/* Real YouTube video player */}
     <div className="w-full max-w-3xl px-6">
       {/* Video container */}
       <div
@@ -19,52 +20,40 @@ const MockVideoPlayer: React.FC = () => (
           border: '1px solid #1e293b',
         }}
       >
-        {/* Pause overlay */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-          <div
-            className="w-16 h-16 rounded-full flex items-center justify-center"
-            style={{ background: 'rgba(0,212,200,0.15)', border: '1px solid rgba(0,212,200,0.3)' }}
-          >
-            <span className="text-[#00d4c8] text-2xl ml-1">▶</span>
-          </div>
-          <p className="text-[#94a3b8] text-sm">Signal Processing — Chapter 4: Fourier Analysis</p>
-        </div>
-
-        {/* Mock video overlay labels */}
-        <div className="absolute top-3 left-3">
-          <span
-            className="px-2 py-1 rounded-md text-xs font-medium"
-            style={{ background: 'rgba(0,0,0,0.7)', color: '#94a3b8' }}
-          >
-            ⏸ 12:34 / 45:02
-          </span>
-        </div>
-        <div className="absolute top-3 right-3">
-          <span
-            className="px-2 py-1 rounded-md text-xs font-medium"
-            style={{ background: 'rgba(0,212,200,0.15)', color: '#00d4c8', border: '1px solid rgba(0,212,200,0.2)' }}
-          >
-            nupta tracking
-          </span>
-        </div>
-
-        {/* Progress bar at bottom of video */}
-        <div className="absolute bottom-0 left-0 right-0 h-1"
-          style={{ background: '#1e293b' }}
-        >
-          <div className="h-full" style={{ width: '27%', background: '#00d4c8' }} />
-        </div>
+        <iframe
+          src="https://www.youtube.com/embed/9R3-0-Xg_Ro?enablejsapi=1&rel=0"
+          title="Introduction to Fourier Series"
+          frameBorder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          className="absolute inset-0 w-full h-full"
+        />
       </div>
 
-      {/* Mock video info */}
+      {/* Video info */}
       <div className="mt-4 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-white font-semibold text-base leading-snug">
-            Signal Processing: Fourier Transform & Applications
-          </h2>
-          <p className="text-[#94a3b8] text-sm mt-1">Physics Wallah · 2.4M views · 3 months ago</p>
+          <a
+            href="https://youtu.be/9R3-0-Xg_Ro?si=QIa5H8deVZ50o5lQ"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-white hover:text-[#00d4c8] transition-colors font-semibold text-lg leading-snug flex items-center gap-2 group cursor-pointer"
+          >
+            Introduction to Fourier Series
+            <span className="text-[#94a3b8] group-hover:text-[#00d4c8] text-sm transition-colors">↗</span>
+          </a>
+          <p className="text-[#94a3b8] text-sm mt-1">Neso Academy · 1.6M views · 5 years ago</p>
         </div>
         <div className="flex gap-2 flex-shrink-0">
+          <a
+            href="https://youtu.be/9R3-0-Xg_Ro?si=QIa5H8deVZ50o5lQ"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded-full text-xs text-[#00d4c8] hover:text-white transition-colors flex items-center gap-1.5"
+            style={{ background: 'rgba(0,212,200,0.1)', border: '1px solid rgba(0,212,200,0.3)' }}
+          >
+            <span>📺 Watch on YT</span>
+          </a>
           {['👍 48K', '💾 Save', '↗ Share'].map(action => (
             <button
               key={action}
@@ -77,15 +66,15 @@ const MockVideoPlayer: React.FC = () => (
         </div>
       </div>
 
-      {/* Description placeholder */}
+      {/* Description */}
       <div
         className="mt-4 p-4 rounded-xl"
         style={{ background: '#0d1b2a', border: '1px solid #1e293b' }}
       >
         <p className="text-[#94a3b8] text-xs leading-relaxed">
-          In this lecture we cover the fundamentals of the Fourier Transform, its applications in signal
-          processing, the convolution theorem, and discrete-time signal analysis. Topics: Fourier series,
-          DFT, FFT algorithm, Nyquist theorem, windowing functions...
+          In this lecture we introduce the Fourier Series, a mathematical tool used to represent periodic signals 
+          as a sum of sine and cosine components. We cover periodic signals, harmonics, Dirichlet conditions, 
+          and discuss the fundamental differences between the Fourier Series and the Fourier Transform.
         </p>
       </div>
 
@@ -127,24 +116,45 @@ const MockVideoPlayer: React.FC = () => (
 
 const App: React.FC = () => {
   return (
-    <div
-      className="relative min-h-screen flex"
-      style={{ background: '#0a0f1e' }}
+    <ClickSpark
+      sparkColor="#00d4c8"
+      sparkSize={12}
+      sparkRadius={20}
+      sparkCount={10}
+      duration={500}
     >
-      <TargetCursor 
-        targetSelector=".cursor-target"
-        cursorColorOnTarget="#00d4c8"
-        cursorColor="#94a3b8"
-        hideDefaultCursor={true}
-      />
-      <MockVideoPlayer />
-      <Sidebar
-        defaultOpen={true}
-        lectureTitle="Signal Processing — Chapter 4"
-        lectureDetected={true}
-        spacedReviewDay={3}
-      />
-    </div>
+      <div
+        className="relative min-h-screen flex overflow-hidden"
+        style={{ background: '#0a0f1e' }}
+      >
+        {/* Interactive background dot grid */}
+        <DotField
+          className="absolute inset-0 z-0 pointer-events-none"
+          dotRadius={1.5}
+          dotSpacing={14}
+          bulgeStrength={67}
+          glowRadius={160}
+          sparkle={true}
+          waveAmplitude={0}
+          gradientFrom="rgba(0, 212, 200, 0.25)"
+          gradientTo="rgba(139, 92, 246, 0.12)"
+          glowColor="#0a121e"
+        />
+        <TargetCursor 
+          targetSelector=".cursor-target"
+          cursorColorOnTarget="#00d4c8"
+          cursorColor="#94a3b8"
+          hideDefaultCursor={true}
+        />
+        <MockVideoPlayer />
+        <Sidebar
+          defaultOpen={true}
+          lectureTitle="Signal Processing — Chapter 4"
+          lectureDetected={true}
+          spacedReviewDay={3}
+        />
+      </div>
+    </ClickSpark>
   );
 };
 
