@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import FocusTab from './tabs/FocusTab';
+import type { FocusQuestion } from './tabs/FocusTab';
 import NotesTab from './tabs/NotesTab';
+import type { Note } from './tabs/NotesTab';
 import SummaryTab from './tabs/SummaryTab';
+import type { SummaryData } from './tabs/SummaryTab';
 import FlashcardsTab from './tabs/FlashcardsTab';
+import type { Flashcard } from './tabs/FlashcardsTab';
 import GooeyNav from './GooeyNav';
 import logoImg from '../assets/logo.png';
 
@@ -13,6 +17,30 @@ export interface SidebarProps {
   lectureTitle?: string;
   lectureDetected?: boolean;
   spacedReviewDay?: number;
+  /** Live quiz from the extension engine (undefined = demo mode, null = idle). */
+  focusQuestions?: FocusQuestion[] | null;
+  /** Called when a live quiz is finished/skipped → resumes the video. */
+  onQuizComplete?: () => void;
+  /** Real lecture progress percentage from the tracked video. */
+  lectureProgress?: number;
+  /** Engine status line (model download %, "Listening to tab audio", ...). */
+  engineStatus?: string;
+  /** Live notes (persisted per lecture). */
+  notes?: Note[];
+  onAddNote?: (text: string) => void;
+  onDeleteNote?: (id: string) => void;
+  onSeekNote?: (tSec: number) => void;
+  /** Live summary, growing at each checkpoint. */
+  summaryData?: SummaryData;
+  /** Live flashcard deck (due-first order). */
+  cards?: Flashcard[];
+  onRateCard?: (id: string, rating: 'easy' | 'hard') => void;
+  /** Wrong quiz answers become flashcards. */
+  onWrongAnswer?: (q: FocusQuestion) => void;
+  /** A quiz is waiting — the ball pulses amber while the panel is closed. */
+  quizPending?: boolean;
+  /** Renders a Stop button in the bottom bar (stops monitoring). */
+  onStopMonitoring?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -20,6 +48,20 @@ const Sidebar: React.FC<SidebarProps> = ({
   lectureTitle = 'Signal Processing — Chapter 4',
   lectureDetected = true,
   spacedReviewDay = 3,
+  focusQuestions,
+  onQuizComplete,
+  lectureProgress,
+  engineStatus,
+  notes,
+  onAddNote,
+  onDeleteNote,
+  onSeekNote,
+  summaryData,
+  cards,
+  onRateCard,
+  onWrongAnswer,
+  quizPending,
+  onStopMonitoring,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TabId>('focus');
@@ -39,8 +81,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const dragStartRef = useRef<{ mouseX: number; mouseY: number; btnX: number; btnY: number } | null>(null);
   const dragStartedRef = useRef<boolean>(false);
 
-  const buttonWidth = 56;
-  const buttonHeight = 56;
+  const buttonWidth = 38;
+  const buttonHeight = 38;
   const minPadding = 16;
 
   // Initialize button position correctly after mount
@@ -252,6 +294,9 @@ const Sidebar: React.FC<SidebarProps> = ({
     setIsOpen(o => !o);
   };
 
+  // Quiz waiting + panel closed → the ball demands attention.
+  const alerting = !!quizPending && !isOpen;
+
   // Position panel relative to the button
   const isLeftHalf = buttonPos.x < window.innerWidth / 2;
   const panelX = isLeftHalf 
@@ -270,27 +315,42 @@ const Sidebar: React.FC<SidebarProps> = ({
         onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
         onClick={handleClick}
-        className={`fixed z-[10000] w-14 h-14 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-shadow duration-300 shadow-[0_4px_24px_rgba(0,0,0,0.5)] border border-white/10 hover:border-[#00d4c8]/30 ${
+        className={`fixed z-[10000] rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing select-none transition-shadow duration-300 shadow-[0_4px_24px_rgba(0,0,0,0.4)] border border-white/10 hover:border-[#00d4c8]/30 ${
           isDragging ? 'scale-95' : 'hover:scale-105'
-        }`}
+        } ${alerting ? 'nupta-alert' : ''}`}
         style={{
           left: `${buttonPos.x}px`,
           top: `${buttonPos.y}px`,
-          background: 'rgba(15, 23, 42, 0.75)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
+          width: `${buttonWidth}px`,
+          height: `${buttonHeight}px`,
+          background: 'rgba(15, 23, 42, 0.28)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
           transition: isDragging ? 'none' : 'transform 0.15s ease-out, border-color 0.15s ease-out',
         }}
       >
+        {/* Expanding ripple rings while a quiz is waiting */}
+        {alerting && (
+          <>
+            <span className="nupta-ripple" />
+            <span className="nupta-ripple nupta-ripple-delay" />
+          </>
+        )}
         {/* AssistiveTouch Outer Ring */}
-        <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center transition-all duration-300">
+        <div
+          className="rounded-full border border-white/20 flex items-center justify-center transition-all duration-300"
+          style={{ width: '27px', height: '27px' }}
+        >
           {/* AssistiveTouch Inner Circle */}
           <div
-            className={`w-6 h-6 rounded-full transition-all duration-300 ${
-              isOpen 
-                ? 'bg-[#00d4c8] shadow-[0_0_12px_#00d4c8]' 
-                : 'bg-white/85 shadow-[0_0_8px_rgba(255,255,255,0.4)]'
+            className={`rounded-full transition-all duration-300 ${
+              isOpen
+                ? 'bg-[#00d4c8] shadow-[0_0_12px_#00d4c8]'
+                : alerting
+                ? 'bg-amber-400 shadow-[0_0_14px_#f59e0b]'
+                : 'bg-white/60 shadow-[0_0_8px_rgba(255,255,255,0.3)]'
             }`}
+            style={{ width: '15px', height: '15px' }}
           />
         </div>
       </div>
@@ -338,12 +398,27 @@ const Sidebar: React.FC<SidebarProps> = ({
           />
         </div>
 
-        {/* Tab content */}
+        {/* Tab content — all tabs stay mounted so switching tabs never loses
+            quiz progress, notes drafts, or flashcard position. */}
         <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 min-h-0">
-          {activeTab === 'focus' && <FocusTab />}
-          {activeTab === 'notes' && <NotesTab />}
-          {activeTab === 'summary' && <SummaryTab />}
-          {activeTab === 'cards' && <FlashcardsTab />}
+          <div className="h-full" style={{ display: activeTab === 'focus' ? 'block' : 'none' }}>
+            <FocusTab
+              questions={focusQuestions}
+              onComplete={onQuizComplete}
+              lectureProgress={lectureProgress ?? 42}
+              engineStatus={engineStatus}
+              onWrongAnswer={onWrongAnswer}
+            />
+          </div>
+          <div className="h-full" style={{ display: activeTab === 'notes' ? 'block' : 'none' }}>
+            <NotesTab notes={notes} onAdd={onAddNote} onDelete={onDeleteNote} onSeek={onSeekNote} />
+          </div>
+          <div className="h-full" style={{ display: activeTab === 'summary' ? 'block' : 'none' }}>
+            <SummaryTab data={summaryData} />
+          </div>
+          <div className="h-full" style={{ display: activeTab === 'cards' ? 'block' : 'none' }}>
+            <FlashcardsTab cards={cards} onRate={onRateCard} />
+          </div>
         </div>
 
         {/* Bottom status bar */}
@@ -351,6 +426,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           lectureDetected={lectureDetected}
           lectureTitle={lectureTitle}
           spacedReviewDay={spacedReviewDay}
+          onStop={onStopMonitoring}
         />
 
         {/* Resize handle (bottom-right corner) */}
@@ -428,7 +504,8 @@ const BottomBar: React.FC<{
   lectureDetected: boolean;
   lectureTitle: string;
   spacedReviewDay: number;
-}> = ({ lectureDetected, spacedReviewDay }) => (
+  onStop?: () => void;
+}> = ({ lectureDetected, spacedReviewDay, onStop }) => (
   <div
     className="flex-shrink-0 flex items-center justify-between px-4 py-2.5"
     style={{ borderTop: '1px solid #1e293b' }}
@@ -439,7 +516,18 @@ const BottomBar: React.FC<{
         {lectureDetected ? '📹 Lecture detected' : '⏸ No video'}
       </span>
     </div>
-    <span className="text-[#94a3b8]/60 text-[11px]">Spaced review: Day {spacedReviewDay}</span>
+    <div className="flex items-center gap-2.5">
+      <span className="text-[#94a3b8]/60 text-[11px]">Spaced review: Day {spacedReviewDay}</span>
+      {onStop && (
+        <button
+          onClick={onStop}
+          title="Stop monitoring this lecture"
+          className="px-2 py-0.5 rounded-md bg-red-500/10 border border-red-500/25 text-red-400 text-[10px] font-semibold hover:bg-red-500/20 transition-colors"
+        >
+          ■ Stop
+        </button>
+      )}
+    </div>
   </div>
 );
 

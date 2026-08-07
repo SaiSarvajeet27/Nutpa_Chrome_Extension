@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# machine-local API key — never commit (copy extension/config.example.js instead)
+extension/config.js
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

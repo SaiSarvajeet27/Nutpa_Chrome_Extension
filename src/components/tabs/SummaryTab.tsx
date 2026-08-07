@@ -8,10 +8,11 @@ export interface SummaryData {
 }
 
 interface SummaryTabProps {
+  /** Live mode: summary built by the engine, growing at each checkpoint. */
   data?: SummaryData;
 }
 
-const defaultData: SummaryData = {
+const demoData: SummaryData = {
   title: 'Lecture Summary',
   bullets: [
     'The Fourier Transform converts a time-domain signal into its frequency-domain representation, enabling analysis of constituent sinusoidal components.',
@@ -23,17 +24,37 @@ const defaultData: SummaryData = {
   generatedAt: 'Generated at end of lecture',
 };
 
-const SummaryTab: React.FC<SummaryTabProps> = ({ data = defaultData }) => {
-  const [expanded, setExpanded] = useState<number | null>(null);
+const SummaryTab: React.FC<SummaryTabProps> = ({ data }) => {
+  const live = data !== undefined;
+  const summary = data ?? demoData;
   const [copied, setCopied] = useState(false);
 
+  const wordCount = summary.bullets.join(' ').split(/\s+/).filter(Boolean).length;
+  const readingMin = Math.max(1, Math.round(wordCount / 200));
+
   const handleCopy = () => {
-    const text = data.bullets.join('\n\n');
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(summary.bullets.join('\n\n')).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  // Live mode before the first checkpoint: explain how the summary works.
+  if (live && summary.bullets.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 h-full py-8 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-[#00d4c8]/10 border border-[#00d4c8]/30 flex items-center justify-center text-3xl">
+          📝
+        </div>
+        <div>
+          <p className="text-white font-semibold text-base">Summary builds itself</p>
+          <p className="text-[#94a3b8] text-xs mt-2 leading-relaxed max-w-[240px]">
+            Key points are added automatically every time a subtopic completes. Keep watching — this page fills up on its own.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto scrollbar-thin pr-0.5">
@@ -41,7 +62,7 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ data = defaultData }) => {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-1 h-4 rounded-full bg-[#00d4c8]" />
-          <h3 className="text-white text-sm font-semibold">{data.title}</h3>
+          <h3 className="text-white text-sm font-semibold">{summary.title}</h3>
         </div>
         <button
           onClick={handleCopy}
@@ -61,72 +82,56 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ data = defaultData }) => {
         </button>
       </div>
 
-      {/* Summary bullets */}
-      <div className="bg-[#0d1b2a] border border-[#1e293b] rounded-xl p-4 flex flex-col gap-0">
-        {data.bullets.map((bullet, i) => (
-          <div key={i} className="flex gap-3 py-3 border-b border-[#1e293b] last:border-b-0">
-            <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-[#00d4c8] mt-2" />
-            <button
-              className="text-left text-[#94a3b8] text-xs leading-relaxed hover:text-white transition-colors w-full"
-              onClick={() => setExpanded(expanded === i ? null : i)}
-            >
-              <span className={expanded === i ? 'text-white' : ''}>{bullet}</span>
-            </button>
-          </div>
+      {/* Bullets */}
+      <ul className="flex flex-col gap-2.5">
+        {summary.bullets.map((b, i) => (
+          <li
+            key={i}
+            className="flex items-start gap-2.5 bg-[#0d1b2a] border border-[#1e293b] rounded-xl px-3 py-2.5"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-[#00d4c8] mt-1.5 flex-shrink-0" />
+            <span className="text-[#cbd5e1] text-xs leading-relaxed">{b}</span>
+          </li>
         ))}
-      </div>
+      </ul>
 
-      {/* Key Concepts */}
-      <div className="flex flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-[#94a3b8] text-xs font-medium uppercase tracking-wider">Key Concepts</span>
-          <div className="flex-1 h-px bg-[#1e293b]" />
+      {/* Concept chips */}
+      {summary.concepts.length > 0 && (
+        <div>
+          <p className="text-[#94a3b8] text-[10px] font-semibold tracking-widest uppercase mb-2">Key concepts</p>
+          <div className="flex flex-wrap gap-1.5">
+            {summary.concepts.map(c => (
+              <span
+                key={c}
+                className="px-2.5 py-1 rounded-full bg-[#00d4c8]/10 border border-[#00d4c8]/25 text-[#00d4c8] text-[11px] font-medium"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {data.concepts.map((concept, i) => (
-            <ConceptBadge key={i} label={concept} index={i} />
-          ))}
-        </div>
-      </div>
+      )}
 
-      {/* Quick stat strip */}
+      {/* Stats — computed from the actual content */}
       <div className="grid grid-cols-3 gap-2">
         {[
-          { label: 'Topics', value: data.concepts.length },
-          { label: 'Key points', value: data.bullets.length },
-          { label: 'Reading time', value: '~2m' },
-        ].map(stat => (
+          { value: String(summary.concepts.length), label: 'Concepts' },
+          { value: String(summary.bullets.length), label: 'Key points' },
+          { value: `~${readingMin}m`, label: 'Reading time' },
+        ].map(s => (
           <div
-            key={stat.label}
-            className="bg-[#0d1b2a] border border-[#1e293b] rounded-xl p-2.5 flex flex-col items-center gap-0.5"
+            key={s.label}
+            className="bg-[#0d1b2a] border border-[#1e293b] rounded-xl px-2 py-2.5 text-center"
           >
-            <span className="text-white text-sm font-semibold">{stat.value}</span>
-            <span className="text-[#94a3b8]/60 text-xs">{stat.label}</span>
+            <p className="text-white text-sm font-bold">{s.value}</p>
+            <p className="text-[#94a3b8] text-[10px] mt-0.5">{s.label}</p>
           </div>
         ))}
       </div>
 
-      {/* Footer */}
-      <p className="text-[#94a3b8]/40 text-xs text-center pb-1">{data.generatedAt}</p>
+      <p className="text-[#94a3b8]/50 text-[10px] text-center">{summary.generatedAt}</p>
     </div>
   );
 };
-
-const conceptColors = [
-  'bg-[#00d4c8]/10 border-[#00d4c8]/25 text-[#00d4c8]',
-  'bg-[#3b82f6]/10 border-[#3b82f6]/25 text-[#3b82f6]',
-  'bg-[#8b5cf6]/10 border-[#8b5cf6]/25 text-[#8b5cf6]',
-  'bg-[#f59e0b]/10 border-[#f59e0b]/25 text-[#f59e0b]',
-];
-
-const ConceptBadge: React.FC<{ label: string; index: number }> = ({ label, index }) => (
-  <span
-    className={`px-2.5 py-1 rounded-full border text-xs font-medium cursor-default hover:opacity-80 transition-opacity ${
-      conceptColors[index % conceptColors.length]
-    }`}
-  >
-    {label}
-  </span>
-);
 
 export default SummaryTab;

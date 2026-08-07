@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
+import type { FocusQuestion } from './components/tabs/FocusTab';
 import TargetCursor from './components/TargetCursor';
 import MagicBento from './components/MagicBento';
 import ClickSpark from './components/ClickSpark';
@@ -7,14 +8,14 @@ import DotField from './components/DotField';
 import './index.css';
 
 const MockVideoPlayer: React.FC = () => (
-  <div className="flex-1 flex flex-col items-center justify-center gap-6 min-h-screen py-10 z-10 relative"
-  >
+  <div className="flex-1 flex flex-col items-center justify-center gap-6 min-h-screen py-10 z-10 relative"                 
+  >                      
     {/* Real YouTube video player */}
     <div className="w-full max-w-3xl px-6">
       {/* Video container */}
-      <div
+      <div                   
         className="w-full rounded-2xl overflow-hidden relative"
-        style={{
+        style={{                                               
           aspectRatio: '16/9',
           background: '#0d1b2a',
           border: '1px solid #1e293b',
@@ -114,7 +115,43 @@ const MockVideoPlayer: React.FC = () => (
   </div>
 );
 
+// Demo simulation of a live quiz — in the real extension these questions come
+// from the engine (Whisper transcript → Gemini) via QUIZ_READY messages.
+const demoQuizQuestions: FocusQuestion[] = [
+  {
+    id: 1,
+    total: 2,
+    subtopic: 'Fourier Series basics',
+    question: 'Why is the Fourier Series used for periodic signals?',
+    correctKey: 'A',
+    explanation: 'The lecturer explained that periodic signals can be expanded into sinusoidal harmonics that are orthogonal to one another.',
+    options: [
+      { key: 'A', text: 'To expand them in terms of sinusoidal, orthogonal harmonics' },
+      { key: 'B', text: 'To compress them for storage' },
+      { key: 'C', text: 'To convert them into aperiodic signals' },
+      { key: 'D', text: 'To amplify their fundamental frequency' },
+    ],
+  },
+  {
+    id: 2,
+    total: 2,
+    subtopic: 'Harmonics & frequency',
+    question: 'If a periodic signal has period T seconds, what is its fundamental frequency?',
+    correctKey: 'C',
+    explanation: 'One cycle takes T seconds, so the signal completes 1/T cycles per second — the fundamental frequency.',
+    options: [
+      { key: 'A', text: 'T cycles per second' },
+      { key: 'B', text: '2T cycles per second' },
+      { key: 'C', text: '1/T cycles per second' },
+      { key: 'D', text: 'T² cycles per second' },
+    ],
+  },
+];
+
 const App: React.FC = () => {
+  // null = idle ("watching the lecture"), array = active quiz — same states the
+  // extension drives. Finishing or skipping the demo quiz returns to idle.
+  const [quiz, setQuiz] = useState<FocusQuestion[] | null>(demoQuizQuestions);
   return (
     <ClickSpark
       sparkColor="#00d4c8"
@@ -152,6 +189,9 @@ const App: React.FC = () => {
           lectureTitle="Signal Processing — Chapter 4"
           lectureDetected={true}
           spacedReviewDay={3}
+          focusQuestions={quiz}
+          onQuizComplete={() => setQuiz(null)}
+          lectureProgress={42}
         />
       </div>
     </ClickSpark>

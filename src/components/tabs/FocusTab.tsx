@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 export interface FocusQuestion {
   id: number;
@@ -6,11 +6,26 @@ export interface FocusQuestion {
   options: { key: string; text: string }[];
   correctKey: string;
   total: number;
+  /** Which lecture subtopic this question checks (from the AI engine). */
+  subtopic?: string;
+  /** Shown after answering (from the AI engine). */
+  explanation?: string;
 }
 
 interface FocusTabProps {
-  questions?: FocusQuestion[];
+  /**
+   * undefined → demo mode (built-in mock questions)
+   * null      → live mode, no active quiz (idle "watching" state)
+   * array     → live quiz from the engine
+   */
+  questions?: FocusQuestion[] | null;
   lectureProgress?: number;
+  /** Called when the student finishes or skips a live quiz → resumes the video. */
+  onComplete?: () => void;
+  /** Engine status line shown while idle (model download %, listening state). */
+  engineStatus?: string;
+  /** Live mode: called when the student answers wrong → auto-creates a flashcard. */
+  onWrongAnswer?: (q: FocusQuestion) => void;
 }
 
 const defaultQuestions: FocusQuestion[] = [
@@ -19,6 +34,7 @@ const defaultQuestions: FocusQuestion[] = [
     total: 3,
     question: 'What is the primary purpose of the Fourier Transform in signal processing?',
     correctKey: 'A',
+    subtopic: 'Fourier Transform',
     options: [
       { key: 'A', text: 'Convert signals from time domain to frequency domain' },
       { key: 'B', text: 'Amplify weak electrical signals' },
@@ -31,6 +47,7 @@ const defaultQuestions: FocusQuestion[] = [
     total: 3,
     question: 'In signal processing, what does convolution in the time domain correspond to in the frequency domain?',
     correctKey: 'B',
+    subtopic: 'Convolution Theorem',
     options: [
       { key: 'A', text: 'Addition of frequency components' },
       { key: 'B', text: 'Multiplication of frequency spectra' },
@@ -43,6 +60,7 @@ const defaultQuestions: FocusQuestion[] = [
     total: 3,
     question: 'Which of the following best describes the Nyquist-Shannon sampling theorem?',
     correctKey: 'C',
+    subtopic: 'Sampling Theorem',
     options: [
       { key: 'A', text: 'Signals must be sampled at exactly their frequency' },
       { key: 'B', text: 'Sampling rate should equal the signal frequency' },
@@ -55,24 +73,66 @@ const defaultQuestions: FocusQuestion[] = [
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
 
 const FocusTab: React.FC<FocusTabProps> = ({
-  questions = defaultQuestions,
-  lectureProgress = 42,
+  questions,
+  lectureProgress = 0,
+  onComplete,
+  engineStatus,
+  onWrongAnswer,
 }) => {
+  const liveMode = questions !== undefined;
+  const activeQuestions = questions === undefined ? defaultQuestions : questions;
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [answerState, setAnswerState] = useState<AnswerState>('unanswered');
   const [completed, setCompleted] = useState(false);
+  const [score, setScore] = useState(0);
 
-  const q = questions[currentIndex];
+  // A new quiz arrived (or was cleared) — reset all progress.
+  useEffect(() => {
+    setCurrentIndex(0);
+    setSelectedKey(null);
+    setAnswerState('unanswered');
+    setCompleted(false);
+    setScore(0);
+  }, [questions]);
+
+  // ── Idle state: monitoring is on but no quiz is due ──
+  if (liveMode && (activeQuestions === null || activeQuestions.length === 0)) {
+    return (
+      <div className="flex flex-col gap-4 h-full">
+        <div className="flex flex-col items-center justify-center flex-1 gap-4 py-8 text-center">
+          <div className="w-16 h-16 rounded-full bg-[#00d4c8]/10 border border-[#00d4c8]/30 flex items-center justify-center text-3xl">
+            👁️
+          </div>
+          <div>
+            <p className="text-white font-semibold text-base">Watching the lecture with you</p>
+            <p className="text-[#94a3b8] text-xs mt-2 leading-relaxed max-w-[240px]">
+              Questions appear here automatically when a subtopic wraps up — keep watching.
+            </p>
+            {engineStatus && (
+              <p className="text-[#00d4c8] text-[11px] mt-3 font-medium">{engineStatus}</p>
+            )}
+          </div>
+        </div>
+        <ProgressBar progress={lectureProgress} />
+      </div>
+    );
+  }
+
+  const q = activeQuestions![currentIndex];
 
   const handleSelect = (key: string) => {
     if (answerState !== 'unanswered') return;
     setSelectedKey(key);
-    setAnswerState(key === q.correctKey ? 'correct' : 'incorrect');
+    const correct = key === q.correctKey;
+    setAnswerState(correct ? 'correct' : 'incorrect');
+    if (correct) setScore(s => s + 1);
+    else if (liveMode && onWrongAnswer) onWrongAnswer(q); // wrong → spaced-review card
   };
 
   const handleNext = () => {
-    if (currentIndex < questions.length - 1) {
+    if (currentIndex < activeQuestions!.length - 1) {
       setCurrentIndex(i => i + 1);
       setSelectedKey(null);
       setAnswerState('unanswered');
@@ -81,11 +141,16 @@ const FocusTab: React.FC<FocusTabProps> = ({
     }
   };
 
+  const handleFinish = () => {
+    if (onComplete) onComplete();
+  };
+
   const handleReset = () => {
     setCurrentIndex(0);
     setSelectedKey(null);
     setAnswerState('unanswered');
     setCompleted(false);
+    setScore(0);
   };
 
   const getOptionStyle = (key: string): string => {
@@ -113,6 +178,7 @@ const FocusTab: React.FC<FocusTabProps> = ({
     return `${base} bg-[#1e293b] text-[#94a3b8]/50`;
   };
 
+  // ── Completion screen ──
   if (completed) {
     return (
       <div className="flex flex-col gap-4 h-full">
@@ -121,21 +187,35 @@ const FocusTab: React.FC<FocusTabProps> = ({
             🎯
           </div>
           <div className="text-center">
-            <p className="text-white font-semibold text-lg">Session Complete</p>
-            <p className="text-[#94a3b8] text-sm mt-1">All {questions.length} questions answered</p>
+            <p className="text-white font-semibold text-lg">
+              {liveMode ? 'Checkpoint cleared' : 'Session Complete'}
+            </p>
+            <p className="text-[#94a3b8] text-sm mt-1">
+              Score: <span className="text-[#00d4c8] font-semibold">{score}/{activeQuestions!.length}</span>
+            </p>
           </div>
-          <button
-            onClick={handleReset}
-            className="px-5 py-2.5 rounded-full bg-[#00d4c8] text-[#0a0f1e] text-sm font-semibold hover:bg-[#00b8ad] transition-colors"
-          >
-            Try Again
-          </button>
+          {liveMode && onComplete ? (
+            <button
+              onClick={handleFinish}
+              className="px-5 py-2.5 rounded-full bg-[#00d4c8] text-[#0a0f1e] text-sm font-semibold hover:bg-[#00b8ad] transition-colors"
+            >
+              Resume video ▶
+            </button>
+          ) : (
+            <button
+              onClick={handleReset}
+              className="px-5 py-2.5 rounded-full bg-[#00d4c8] text-[#0a0f1e] text-sm font-semibold hover:bg-[#00b8ad] transition-colors"
+            >
+              Try Again
+            </button>
+          )}
         </div>
         <ProgressBar progress={lectureProgress} />
       </div>
     );
   }
 
+  // ── Active question ──
   return (
     <div className="flex flex-col gap-3 h-full">
       {/* Pause banner */}
@@ -148,7 +228,7 @@ const FocusTab: React.FC<FocusTabProps> = ({
       <div className="bg-[#0d1b2a] border border-[#1e293b] rounded-xl p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <span className="text-[#94a3b8] text-xs">
-            Question {currentIndex + 1} of {q.total}
+            Question {currentIndex + 1} of {activeQuestions!.length}
           </span>
           {answerState !== 'unanswered' && (
             <span
@@ -162,6 +242,12 @@ const FocusTab: React.FC<FocusTabProps> = ({
             </span>
           )}
         </div>
+
+        {q.subtopic && (
+          <span className="self-start px-2 py-0.5 rounded-full bg-[#3b82f6]/10 border border-[#3b82f6]/25 text-[#60a5fa] text-[10px] font-semibold tracking-wide">
+            {q.subtopic}
+          </span>
+        )}
 
         <p className="text-white text-sm font-medium leading-relaxed">{q.question}</p>
 
@@ -183,27 +269,40 @@ const FocusTab: React.FC<FocusTabProps> = ({
             </button>
           ))}
         </div>
+
+        {/* Explanation (from the AI engine) */}
+        {answerState !== 'unanswered' && q.explanation && (
+          <div className="px-3 py-2.5 rounded-lg bg-[#0a0f1e] border border-[#1e293b]">
+            <p className="text-[#94a3b8] text-xs leading-relaxed">
+              <span className={answerState === 'correct' ? 'text-emerald-400' : 'text-red-400'}>
+                {answerState === 'correct' ? '✓ ' : '✗ '}
+              </span>
+              {q.explanation}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Post-answer actions */}
       {answerState !== 'unanswered' && (
         <div className="bg-[#0d1b2a] border border-[#1e293b] rounded-xl p-3 flex flex-col gap-2">
-          <p className="text-[#94a3b8] text-xs mb-1">What would you like to do next?</p>
-          <div className="flex gap-2 flex-wrap">
-            <button className="flex-1 min-w-0 px-2 py-2 rounded-lg bg-[#3b82f6]/10 border border-[#3b82f6]/30 text-[#3b82f6] text-xs font-medium hover:bg-[#3b82f6]/20 transition-colors">
-              📚 Revise Concept
-            </button>
-            <button
-              onClick={handleNext}
-              className="flex-1 min-w-0 px-2 py-2 rounded-lg bg-[#00d4c8] text-[#0a0f1e] text-xs font-semibold hover:bg-[#00b8ad] transition-colors"
-            >
-              {currentIndex < questions.length - 1 ? 'Next →' : 'Finish ✓'}
-            </button>
-          </div>
-          <button className="w-full px-2 py-2 rounded-lg bg-[#0a0f1e] border border-[#1e293b] text-[#94a3b8] text-xs hover:text-white hover:border-[#94a3b8]/40 transition-colors">
-            ☕ Take a Break
+          <button
+            onClick={handleNext}
+            className="w-full px-2 py-2 rounded-lg bg-[#00d4c8] text-[#0a0f1e] text-xs font-semibold hover:bg-[#00b8ad] transition-colors"
+          >
+            {currentIndex < activeQuestions!.length - 1 ? 'Next question →' : 'Finish ✓'}
           </button>
         </div>
+      )}
+
+      {/* Skip escape hatch for live quizzes */}
+      {liveMode && onComplete && (
+        <button
+          onClick={handleFinish}
+          className="self-center text-[#94a3b8]/60 hover:text-[#94a3b8] text-[11px] underline transition-colors"
+        >
+          Skip quiz →
+        </button>
       )}
 
       <div className="mt-auto">
@@ -221,8 +320,8 @@ const ProgressBar: React.FC<{ progress: number }> = ({ progress }) => (
     </div>
     <div className="h-1.5 bg-[#1e293b] rounded-full overflow-hidden">
       <div
-        className="h-full bg-gradient-to-r from-[#00d4c8] to-[#3b82f6] rounded-full transition-all duration-700"
-        style={{ width: `${progress}%` }}
+        className="h-full rounded-full transition-all duration-700"
+        style={{ width: `${progress}%`, background: 'linear-gradient(to right, #00d4c8, #3b82f6)' }}
       />
     </div>
   </div>

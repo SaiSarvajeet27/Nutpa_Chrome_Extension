@@ -35,3 +35,28 @@
 .card-back {
   transform: rotateY(180deg);
 }
+
+/* ── nupta: quiz-incoming alert (ball ripple + bounce) ── */
+@keyframes nupta-ripple {
+  0% { transform: scale(1); opacity: 0.9; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes nupta-bounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+.nupta-alert {
+  border-color: rgba(245, 158, 11, 0.7) !important;
+  box-shadow: 0 0 18px rgba(245, 158, 11, 0.55) !important;
+}
+.nupta-ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid #f59e0b;
+  pointer-events: none;
+  animation: nupta-ripple 1.4s ease-out infinite;
+}
+.nupta-ripple.nupta-ripple-delay {
+  animation-delay: 0.7s;
+}
