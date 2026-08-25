@@ -7,6 +7,7 @@ import SummaryTab from './tabs/SummaryTab';
 import type { SummaryData } from './tabs/SummaryTab';
 import FlashcardsTab from './tabs/FlashcardsTab';
 import ModelPicker from './ModelPicker';
+import KeysPanel from './KeysPanel';
 import type { SettingsState } from './ModelPicker';
 import type { Flashcard } from './tabs/FlashcardsTab';
 import GooeyNav from './GooeyNav';
@@ -61,8 +62,9 @@ export interface SidebarProps {
   settingsState?: SettingsState | null;
   /** Change (or turn off, with null) the model backing one feature. */
   onChangeModel?: (featureId: string, model: string | null) => void;
-  /** Opens the API keys screen. */
-  onOpenKeys?: () => void;
+  /** Verifies then stores one provider's API key. */
+  onSaveKey?: (provider: string, apiKey: string) => Promise<void>;
+  onRemoveKey?: (provider: string) => Promise<void>;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -86,10 +88,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   onStopMonitoring,
   settingsState,
   onChangeModel,
-  onOpenKeys,
+  onSaveKey,
+  onRemoveKey,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TabId>('focus');
+  // Key entry takes over the content area rather than opening a browser tab —
+  // sending someone to a separate page mid-lecture loses their place.
+  const [showKeys, setShowKeys] = useState(false);
   
   // Floating panel size state
   const [panelSize, setPanelSize] = useState({ width: 340, height: 540 });
@@ -333,7 +339,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         featureId={featureId}
         state={settingsState}
         onChange={onChangeModel}
-        onAddKey={onOpenKeys}
+        onAddKey={() => setShowKeys(true)}
       />
     ) : null;
 
@@ -417,10 +423,10 @@ const Sidebar: React.FC<SidebarProps> = ({
         }}
       >
         {/* Header */}
-        <SidebarHeader onOpenSettings={onOpenKeys} />
+        <SidebarHeader onOpenSettings={() => setShowKeys(true)} />
 
         {/* Tab bar */}
-        <div className="flex-shrink-0 px-3 py-2">
+        <div className="flex-shrink-0 px-3 py-2" style={{ display: showKeys ? 'none' : 'block' }}>
           <GooeyNav
             items={[
               { label: 'Focus', href: '#' },
@@ -441,6 +447,15 @@ const Sidebar: React.FC<SidebarProps> = ({
         {/* Tab content — all tabs stay mounted so switching tabs never loses
             quiz progress, notes drafts, or flashcard position. */}
         <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 min-h-0">
+          {showKeys && settingsState && (
+            <KeysPanel
+              state={settingsState}
+              onClose={() => setShowKeys(false)}
+              onSaveKey={onSaveKey ?? (async () => {})}
+              onRemoveKey={onRemoveKey ?? (async () => {})}
+            />
+          )}
+          <div style={{ display: showKeys ? 'none' : 'contents' }}>
           <div className="h-full" style={{ display: activeTab === 'focus' ? 'block' : 'none' }}>
             <FocusTab
               modelPicker={picker('quiz')}
@@ -459,6 +474,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div className="h-full" style={{ display: activeTab === 'cards' ? 'block' : 'none' }}>
             <FlashcardsTab modelPicker={picker('flashcards')} cards={cards} onRate={onRateCard} />
+          </div>
           </div>
         </div>
 

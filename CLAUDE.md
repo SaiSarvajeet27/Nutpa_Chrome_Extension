@@ -80,6 +80,7 @@ src/
   components/
     Sidebar.tsx                the floating ball + resizable/draggable panel + tab bar (GooeyNav)
     ModelPicker.tsx            the small per-tab model dropdown (one feature each)
+    KeysPanel.tsx              API key entry, in-panel — never opens a browser tab
     tabs/FocusTab.tsx          live MCQ quiz UI (also has demo-mode fallback)
     tabs/NotesTab.tsx          timestamped, seekable, persisted notes
     tabs/SummaryTab.tsx        live-building summary + concept chips
@@ -143,6 +144,10 @@ what that protects and what it does not, and don't let the UI overclaim it.
   crosses to any UI, which is why every key field is a blank write-only input.
 - Keys are verified against the provider before being stored, so a bad paste
   fails at entry rather than mid-lecture.
+- Key entry lives **inside the panel** (`KeysPanel.tsx`), taking over the content
+  area with a back arrow. Do not route it to the options page: sending someone to
+  a separate browser tab mid-lecture loses their place. `options.html` remains as
+  a standalone fallback, but nothing in the widget opens it.
 
 ## Invariants worth keeping (each one is a bug that was fixed)
 

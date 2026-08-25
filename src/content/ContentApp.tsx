@@ -359,13 +359,30 @@ const ContentApp: React.FC = () => {
     []
   );
 
-  const handleOpenKeys = useCallback(() => {
-    try {
-      chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }).catch(() => {});
-    } catch {
-      /* extension reloaded */
-    }
+  const rpc = useCallback(async (type: string, payload: Record<string, unknown> = {}) => {
+    const res: any = await chrome.runtime.sendMessage({ type, ...payload });
+    if (!res || !res.ok) throw new Error((res && res.error) || 'Request failed.');
+    return res;
   }, []);
+
+  const handleSaveKey = useCallback(
+    async (provider: string, apiKey: string) => {
+      // Verified with the provider before storing, so a bad paste fails here
+      // rather than silently in the middle of a lecture.
+      await rpc('KEY_VERIFY', { provider, apiKey });
+      await rpc('KEY_SET', { provider, apiKey });
+      refreshSettings(); // newly usable models unlock in every dropdown
+    },
+    [rpc, refreshSettings]
+  );
+
+  const handleRemoveKey = useCallback(
+    async (provider: string) => {
+      await rpc('KEY_SET', { provider, apiKey: '' });
+      refreshSettings();
+    },
+    [rpc, refreshSettings]
+  );
 
   const handleQuizComplete = useCallback(() => {
     setQuestions(null);
@@ -514,7 +531,8 @@ const ContentApp: React.FC = () => {
       onStopMonitoring={handleStopMonitoring}
       settingsState={settingsState}
       onChangeModel={handleChangeModel}
-      onOpenKeys={handleOpenKeys}
+      onSaveKey={handleSaveKey}
+      onRemoveKey={handleRemoveKey}
       lectureProgress={progress}
       engineStatus={engineStatus}
       notes={uiNotes}
