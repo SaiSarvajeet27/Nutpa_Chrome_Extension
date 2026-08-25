@@ -72,9 +72,15 @@ function mountWidget() {
   const shadow = host.attachShadow({ mode: 'open' });
 
   const style = document.createElement('style');
-  // Strip remote font @import — host-page CSP (e.g. YouTube) may block it and
-  // spam the console; system-ui fallback looks fine.
-  let cssText = (indexCss + '\n' + gooeyCss).replace(/@import url\([^)]*\);?/g, '');
+  // Strip remote font @import — host-page CSP (e.g. YouTube) blocks it and
+  // spams the console; the system-ui fallback looks fine.
+  // Both spellings must be handled: the source writes `@import url('…')`, but
+  // Tailwind v4 rewrites it to the bare-string form `@import "…"` in the built
+  // bundle, which a url()-only pattern silently misses.
+  let cssText = (indexCss + '\n' + gooeyCss).replace(
+    /@import\s+(?:url\(\s*(['"]?)[^)]*\1\s*\)|(['"])[^'"]*\2)[^;]*;?/g,
+    ''
+  );
   // Host pages often change the root font-size (YouTube uses 10px), which
   // shrinks every rem-based Tailwind size inside the widget. Convert rem →
   // fixed px at 17.5px/rem (≈10% larger than the design default) so the
