@@ -12,6 +12,20 @@ import logoImg from '../assets/logo.png';
 
 type TabId = 'focus' | 'notes' | 'summary' | 'cards';
 
+/**
+ * Manifest version, shown in the header. Reading it here (rather than baking a
+ * constant into the bundle) means it always reflects the extension Chrome
+ * actually loaded — which is the fastest way to tell a stale unpacked copy from
+ * a current one. Empty on the demo page, which has no chrome runtime.
+ */
+const extensionVersion = (() => {
+  try {
+    return chrome?.runtime?.getManifest?.().version ?? '';
+  } catch {
+    return '';
+  }
+})();
+
 export interface SidebarProps {
   defaultOpen?: boolean;
   lectureTitle?: string;
@@ -41,6 +55,8 @@ export interface SidebarProps {
   quizPending?: boolean;
   /** Renders a Stop button in the bottom bar (stops monitoring). */
   onStopMonitoring?: () => void;
+  /** Opens the extension's Settings page (model picker + API keys). */
+  onOpenSettings?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -62,6 +78,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onWrongAnswer,
   quizPending,
   onStopMonitoring,
+  onOpenSettings,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TabId>('focus');
@@ -380,7 +397,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         }}
       >
         {/* Header */}
-        <SidebarHeader />
+        <SidebarHeader onOpenSettings={onOpenSettings} />
 
         {/* Tab bar */}
         <div className="flex-shrink-0 px-3 py-2">
@@ -465,7 +482,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
 /* ─── Sub-components ─── */
 
-const SidebarHeader: React.FC = () => (
+const SidebarHeader: React.FC<{ onOpenSettings?: () => void }> = ({ onOpenSettings }) => (
   <div className="flex-shrink-0 px-4 pt-4 pb-3">
     <div className="flex items-center justify-between">
       {/* Logo */}
@@ -481,11 +498,34 @@ const SidebarHeader: React.FC = () => (
         </div>
         <p className="text-[#94a3b8] text-[10px] font-medium tracking-widest uppercase mt-0.5">
           Learning Intelligence
+          {/* Build version, so it's always obvious which code is actually loaded. */}
+          {extensionVersion && (
+            <span className="ml-1.5 normal-case tracking-normal text-[#94a3b8]/50">
+              v{extensionVersion}
+            </span>
+          )}
         </p>
       </div>
 
-      {/* Live dot */}
       <div className="flex items-center gap-2">
+        {/* Settings lives on the extension's options page (keys must never be
+            typed into a widget injected onto a web page), but it has to be
+            reachable from here — this is where people look for it. */}
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            title="Settings — choose a model per feature, add API keys"
+            aria-label="Open Nupta settings"
+            className="flex items-center justify-center w-7 h-7 rounded-full border border-[#1e293b] text-[#94a3b8] hover:text-[#00d4c8] hover:border-[#00d4c8]/40 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        )}
+
+        {/* Live dot */}
         <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full"
           style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)' }}
         >

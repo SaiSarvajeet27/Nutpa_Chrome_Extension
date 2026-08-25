@@ -300,6 +300,16 @@ const ContentApp: React.FC = () => {
     }
   }, []);
 
+  // Content scripts can't call chrome.runtime.openOptionsPage themselves —
+  // the background relays it.
+  const handleOpenSettings = useCallback(() => {
+    try {
+      chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }).catch(() => {});
+    } catch {
+      /* extension reloaded */
+    }
+  }, []);
+
   const handleQuizComplete = useCallback(() => {
     setQuestions(null);
     try {
@@ -445,6 +455,7 @@ const ContentApp: React.FC = () => {
       onQuizComplete={handleQuizComplete}
       onWrongAnswer={handleWrongAnswer}
       onStopMonitoring={handleStopMonitoring}
+      onOpenSettings={handleOpenSettings}
       lectureProgress={progress}
       engineStatus={engineStatus}
       notes={uiNotes}

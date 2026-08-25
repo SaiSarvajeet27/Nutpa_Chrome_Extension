@@ -495,6 +495,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
 
+    // The widget's settings button. Content scripts can't call
+    // openOptionsPage themselves, so the request is relayed through here.
+    case 'OPEN_OPTIONS':
+      chrome.runtime.openOptionsPage();
+      sendResponse({ ok: true });
+      return false;
+
     case 'EVALUATE': {
       const tabId = sender.tab && sender.tab.id;
       if (tabId != null) handleEvaluate(tabId, !!message.final);

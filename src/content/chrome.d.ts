@@ -3,6 +3,7 @@ declare const chrome: {
   runtime: {
     /** Undefined once this content script's extension context is orphaned. */
     id?: string;
+    getManifest?: () => { version: string };
     sendMessage: (message: unknown) => Promise<unknown>;
     onMessage: {
       addListener: (cb: (message: any, sender: any, sendResponse: (r?: unknown) => void) => void) => void;
