@@ -57,12 +57,33 @@ const FlashcardsTab: React.FC<FlashcardsTabProps> = ({ cards, onRate }) => {
   const [ratings, setRatings] = useState<Record<string, Confidence>>({});
   const [completed, setCompleted] = useState(false);
 
-  // First cards arriving in live mode start the session automatically.
+  // Live mode: start a session as soon as cards exist, then keep it in step
+  // with the deck. New cards are APPENDED rather than the session being
+  // replaced by the (re-sorted) deck, so the student's current card and
+  // position never jump — while cards generated later in the lecture still
+  // show up. Without this the session froze at whatever the deck held when
+  // the very first card arrived.
   useEffect(() => {
-    if (live && session === null && cards && cards.length > 0) {
-      setSession(cards);
-    }
-  }, [live, cards, session]);
+    if (!live || !cards || cards.length === 0) return;
+    setSession(prev => {
+      if (prev === null) return cards;
+      const byId = new Map(cards.map(c => [c.id, c]));
+      // Ratings reschedule cards, so refresh due labels in place.
+      let changed = false;
+      const synced = prev.map(c => {
+        const latest = byId.get(c.id);
+        if (latest && (latest.dueLabel !== c.dueLabel || latest.dueColor !== c.dueColor)) {
+          changed = true;
+          return { ...c, dueLabel: latest.dueLabel, dueColor: latest.dueColor };
+        }
+        return c;
+      });
+      const known = new Set(prev.map(c => c.id));
+      const fresh = cards.filter(c => !known.has(c.id));
+      if (fresh.length) return [...synced, ...fresh];
+      return changed ? synced : prev;
+    });
+  }, [live, cards]);
 
   const startSession = () => {
     setSession(live ? (cards && cards.length > 0 ? cards : null) : demoCards);

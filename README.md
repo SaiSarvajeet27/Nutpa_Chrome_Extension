@@ -53,28 +53,66 @@ vite.config.ext.ts    builds src/content → extension/content.js
 
 ## Setup
 
-### 1. Get a free Gemini API key
-Create one at https://aistudio.google.com/apikey (no credit card required).
-
-### 2. Add your key
-In the `extension/` folder, copy `config.example.js` to **`config.js`** and paste your key:
-
-```js
-const LCQ_CONFIG = {
-  GEMINI_API_KEY: 'YOUR_KEY_HERE',
-  GEMINI_MODEL: 'gemini-2.5-flash',
-};
-```
-
-> `config.js` is gitignored — never commit it. Each person adds their own key.
-
-### 3. Load the extension
+### 1. Load the extension
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** and select the **`extension`** folder (not the repo root)
 
+### 2. Add a Gemini key
+Get a free one at https://aistudio.google.com/apikey (no credit card), then open Nupta's
+**Settings** (right-click the toolbar icon → Options), create a passphrase, and paste it in.
+
+> Prefer to bake in a key so it works out of the box? Copy `extension/config.example.js` to
+> `config.js` and paste a Gemini key there. It's gitignored — never commit it. A key entered in
+> Settings always takes precedence.
+
+### 3. Optional: use a premium model
+In Settings you can point each feature — Quiz, Summary, Flashcards, Auto-notes — at a different
+model. Claude and GPT models need your own API key from that provider; see
+[Choosing models](#choosing-models) below.
+
 ### 4. Use it
 Open a lecture, click the nupta toolbar icon once (the badge shows **ON** and a floating ball appears), and play the video. The first run downloads the Whisper model (~75 MB, one time). Questions appear automatically as subtopics complete.
+
+---
+
+## Choosing models
+
+Every AI feature can run on a different model:
+
+| Feature | What it generates |
+|---------|-------------------|
+| **Quiz** | The comprehension questions at each checkpoint — also decides *whether* a subtopic finished |
+| **Summary** | Running key points and concept tags |
+| **Flashcards** | One spaced-repetition card per subtopic |
+| **Auto-notes** | Structured notes written alongside your own (off by default) |
+
+**Gemini is the default and is free.** Claude (Opus 5, Sonnet 5, Haiku 4.5) and OpenAI (GPT-5.2,
+GPT-5 mini, GPT-4.1) require your own API key and bill to your own account.
+
+**On cost:** features that share a model are answered in a **single request**, so leaving
+everything on Gemini is one free call per checkpoint — exactly as it was before model selection
+existed. Split features across three providers and you get three calls per checkpoint. The Settings
+page always shows the current count before you start a lecture.
+
+If a key is missing or the vault is locked, that feature quietly falls back to the free Gemini
+model and says so in the widget's status line, rather than interrupting the lecture.
+
+### How your API keys are protected
+
+There is **no backend** — Nupta is entirely on-device, so there is no server that could hold a key
+even in principle.
+
+- **Encrypted at rest.** Keys are sealed with AES-GCM under a key derived from your passphrase
+  (PBKDF2-SHA256, 600,000 iterations). Copying the Chrome profile off the disk yields ciphertext.
+- **Never in a web page.** Keys are decrypted only inside the extension's service worker — never in
+  the widget injected into the lecture page, so no site you visit can reach them.
+- **One destination.** A key is sent only to its own provider's HTTPS endpoint.
+- **The honest limit.** While unlocked, the decryption key lives in browser session memory, so
+  someone at your unlocked Chrome could extract it. Lock the vault or quit Chrome to clear it, and
+  note that no in-browser code can defend against malware already running as you.
+- **No recovery.** Forget the passphrase and the stored keys are unrecoverable — you paste them
+  again. That is the cost of us not holding anything.
 
 ---
 
@@ -86,6 +124,7 @@ The extension ships with `content.js` prebuilt, so contributors don't need to bu
 npm install
 npm run dev        # live demo page at localhost:5173 (mock data)
 npm run build:ext  # rebuild extension/content.js after UI changes
+npm run check      # typecheck + lint + tests
 ```
 
 After `build:ext`, reload the extension in `chrome://extensions`.
@@ -108,3 +147,8 @@ After `build:ext`, reload the extension in `chrome://extensions`.
 - Needs a reasonably modern GPU for real-time transcription; falls back to CPU (slower) otherwise.
 - YouTube ads get transcribed too and can occasionally influence a question.
 - Each user currently supplies their own free API key — fine for a pilot; a hosted key would be the productization step.
+- The content script is injected on `<all_urls>` so the widget works on any lecture site. It stays
+  dormant on unmonitored tabs (a slow status check, nothing else) and the ball only appears on the
+  tab you started monitoring.
+- The offscreen document is kept alive after you stop monitoring so the Whisper model stays warm and
+  restarting is instant — at the cost of holding the model in memory until Chrome closes.

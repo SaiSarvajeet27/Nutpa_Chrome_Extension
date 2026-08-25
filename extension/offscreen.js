@@ -37,7 +37,11 @@ let pcmLength = 0;
 
 let chunkQueue = [];             // Float32Array chunks awaiting transcription
 let processing = false;
-let transcriptParts = [];        // { text } in order
+let transcriptParts = [];        // transcribed strings, in order
+// Absolute count of parts retired from the front of transcriptParts. The
+// background addresses the stream by absolute position (`seq`) rather than by
+// array index, so trimming old speech can never make it consume the wrong parts.
+let consumedOffset = 0;
 let capturing = false;
 
 function reportStatus(status, detail = '') {
@@ -194,29 +198,46 @@ async function processQueue() {
   }
 }
 
+// Retire parts from the front until the pending transcript fits in maxWords.
+function trimTranscript(maxWords) {
+  let total = 0;
+  for (const p of transcriptParts) total += p.split(/\s+/).length;
+  while (transcriptParts.length > 1 && total > maxWords) {
+    total -= transcriptParts[0].split(/\s+/).length;
+    transcriptParts.shift();
+    consumedOffset++;
+  }
+}
+
 async function drainAndGetTranscript(consume) {
   flushBuffer();                      // include the partial chunk at evaluation time
   await processQueue();               // no-op if already running…
   // …so wait until the queue empties — but never hang forever: if a chunk is
   // stuck (slow CPU, wedged wasm), return whatever transcript we already have.
-  const deadline = Date.now() + 120000;
+  // Kept short: the MV3 service worker awaiting this call can be torn down if
+  // it idles too long, which would silently drop the whole evaluation.
+  const deadline = Date.now() + 30000;
   while ((processing || chunkQueue.length > 0) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 500));
   }
-  const count = transcriptParts.length;
-  const text = transcriptParts.slice(0, count).join(' ');
-  if (consume) transcriptParts.splice(0, count);
-  return { text, count };
+  const text = transcriptParts.join(' ');
+  const seq = consumedOffset + transcriptParts.length; // absolute end position
+  if (consume) {
+    consumedOffset = seq;
+    transcriptParts = [];
+  }
+  return { text, seq };
 }
 
 function stopCapture() {
   capturing = false;
-  try { workletNode && workletNode.disconnect(); } catch (e) {}
-  try { mediaStream && mediaStream.getTracks().forEach((t) => t.stop()); } catch (e) {}
-  try { audioCtx && audioCtx.close(); } catch (e) {}
-  try { playbackCtx && playbackCtx.close(); } catch (e) {}
+  try { if (workletNode) workletNode.disconnect(); } catch (e) { /* already torn down */ }
+  try { if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop()); } catch (e) { /* already stopped */ }
+  try { if (audioCtx) audioCtx.close(); } catch (e) { /* already closed */ }
+  try { if (playbackCtx) playbackCtx.close(); } catch (e) { /* already closed */ }
   workletNode = null; mediaStream = null; audioCtx = null; playbackCtx = null;
-  pcmBuffer = []; pcmLength = 0; chunkQueue = []; transcriptParts = [];
+  pcmBuffer = []; pcmLength = 0; chunkQueue = [];
+  transcriptParts = []; consumedOffset = 0;
   reportStatus('stopped');
 }
 
@@ -239,8 +260,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'CONSUME_TRANSCRIPT') {
     // Remove the parts already quizzed on; keep speech that arrived meanwhile.
-    const n = typeof message.count === 'number' ? message.count : transcriptParts.length;
+    // `seq` is absolute, so this stays correct even if trimming ran in between.
+    const seq = typeof message.seq === 'number'
+      ? message.seq
+      : consumedOffset + transcriptParts.length;
+    const n = Math.max(0, Math.min(seq - consumedOffset, transcriptParts.length));
     transcriptParts.splice(0, n);
+    consumedOffset += n;
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message.type === 'TRIM_TRANSCRIPT') {
+    trimTranscript(Number(message.maxWords) || 3000);
     sendResponse({ ok: true });
     return false;
   }

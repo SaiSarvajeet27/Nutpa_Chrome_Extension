@@ -9,6 +9,10 @@ export interface LectureNote {
   tSec: number | null;
   text: string;
   createdAt: number;
+  /** Written by the auto-notes feature rather than typed by the student. */
+  ai?: boolean;
+  /** Subtopic an AI note belongs to (grouping + dedupe). */
+  subtopic?: string;
 }
 
 export interface LectureSummary {
@@ -39,11 +43,27 @@ export interface Flashcard {
   createdAt: number;
 }
 
-/** Stable identity for the current lecture (YouTube: keyed by the v param). */
+// Params that identify a *visit* rather than a lecture. Keeping them would give
+// the same video a new identity on every share link, splitting its notes.
+const NOISE_PARAMS = /^(utm_|fbclid$|gclid$|si$|feature$|ref$|ref_src$|t$|start$|list$|index$|pp$)/i;
+
+/**
+ * Stable identity for the current lecture. YouTube is keyed by its `v` param;
+ * elsewhere the path plus any meaningful query params, since plenty of course
+ * platforms serve every lecture from one path and vary only the query string.
+ */
 export function videoKey(): string {
-  const v = new URLSearchParams(location.search).get('v');
-  return v
-    ? `${location.origin}${location.pathname}?v=${v}`
+  const params = new URLSearchParams(location.search);
+  const v = params.get('v');
+  if (v) return `${location.origin}${location.pathname}?v=${v}`;
+
+  const meaningful = [...params.entries()]
+    .filter(([k]) => !NOISE_PARAMS.test(k))
+    .sort(([a], [b]) => a.localeCompare(b)) // param order must not change identity
+    .map(([k, val]) => `${k}=${val}`)
+    .join('&');
+  return meaningful
+    ? `${location.origin}${location.pathname}?${meaningful}`
     : `${location.origin}${location.pathname}`;
 }
 
@@ -104,6 +124,44 @@ export async function saveCards(cards: Flashcard[]): Promise<void> {
   await storageSet(CARDS_KEY, cards);
 }
 
+/**
+ * Serializes read-modify-write cycles against chrome.storage.
+ *
+ * Two quick actions — answering a second question wrong, deleting a note while
+ * a checkpoint lands — would otherwise both read the old value and the second
+ * write would silently discard the first. Every mutation queues behind the last.
+ */
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function serialize<T>(job: () => Promise<T>): Promise<T> {
+  const next = writeQueue.then(job, job);
+  // Keep the chain alive even if one job rejects.
+  writeQueue = next.catch(() => {});
+  return next;
+}
+
+/** Atomically read, transform, and persist the flashcard deck. */
+export function updateCards(
+  fn: (cards: Flashcard[]) => Flashcard[] | Promise<Flashcard[]>
+): Promise<Flashcard[]> {
+  return serialize(async () => {
+    const next = await fn(await loadCards());
+    await saveCards(next);
+    return next;
+  });
+}
+
+/** Atomically read, transform, and persist this lecture's notes + summary. */
+export function updateLecture(
+  fn: (lecture: LectureData) => LectureData | Promise<LectureData>
+): Promise<LectureData> {
+  return serialize(async () => {
+    const next = await fn(await loadLecture());
+    await saveLecture(next);
+    return next;
+  });
+}
+
 export function makeCard(front: string, back: string, subtopic?: string): Flashcard {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -135,12 +193,15 @@ export function rateCard(card: Flashcard, rating: 'easy' | 'hard'): Flashcard {
 }
 
 export function dueLabel(card: Flashcard): { label: string; urgent: boolean } {
+  const DAY = 24 * 60 * 60 * 1000;
   const diff = card.nextReview - Date.now();
   if (diff <= 0) return { label: 'Due: Now', urgent: true };
-  if (diff < 24 * 60 * 60 * 1000) return { label: 'Due: Today', urgent: true };
-  const days = Math.ceil(diff / (24 * 60 * 60 * 1000));
-  if (days === 1) return { label: 'Due: Tomorrow', urgent: false };
-  return { label: `Due: In ${days} days`, urgent: false };
+  if (diff < DAY) return { label: 'Due: Today', urgent: true };
+  // Anything past 24h used to fall through to Math.ceil, which returns 2 for
+  // even a hair over a day — so "Tomorrow" was unreachable and a card one day
+  // out read as "In 2 days". Bracket the day explicitly instead.
+  if (diff < 2 * DAY) return { label: 'Due: Tomorrow', urgent: false };
+  return { label: `Due: In ${Math.floor(diff / DAY)} days`, urgent: false };
 }
 
 /** Day counter since first use ("Spaced review: Day N"). */

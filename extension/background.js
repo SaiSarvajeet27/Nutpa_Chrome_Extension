@@ -1,35 +1,97 @@
-// background.js — orchestrates capture, subtopic evaluation, and Gemini generation.
-// One Gemini call per checkpoint returns quiz questions + summary bullets +
-// key concepts + flashcards (piggybacked — zero extra API cost).
+// background.js — orchestrates capture, subtopic evaluation, and generation.
+//
+// Each of the four AI features (quiz, summary, flashcards, auto-notes) can be
+// pointed at a different model. Features that share a model are served by ONE
+// request, so the default configuration — everything on Gemini — still costs a
+// single call per checkpoint, exactly as before per-feature selection existed.
+//
+// The user's own API keys live in an encrypted vault (vault.js) and are read
+// only here, in the service worker, at the moment of the call.
 
-// config.js defines LCQ_CONFIG (machine-local, gitignored). If it's missing,
-// keep the worker alive — getApiConfig() reports a clear error at quiz time.
-try {
-  importScripts('config.js');
-} catch (e) {
-  console.warn('config.js not found. Copy config.example.js to config.js and paste your Gemini API key.');
-}
+import { generate, verifyKey } from './providers.js';
+import { buildRequest, normalize } from './checkpoint.js';
+import {
+  FEATURES,
+  MODELS,
+  PROVIDERS,
+  DEFAULT_MODEL,
+  getModel,
+  loadSettings,
+  saveSettings,
+  groupFeaturesByModel,
+} from './models.js';
+import {
+  vaultExists,
+  isUnlocked,
+  createVault,
+  unlockVault,
+  lockVault,
+  getSecret,
+  setSecret,
+  listConfiguredProviders,
+  resetVault,
+  changePassphrase,
+} from './vault.js';
 
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+// config.js is the shipped free-tier Gemini key (machine-local, gitignored).
+// It is a fallback only — a key entered in Settings always wins.
+let bundledGeminiKey = '';
+const bundledConfigReady = import('./config.js')
+  .then((m) => {
+    const cfg = m.LCQ_CONFIG || m.default || {};
+    if (cfg.GEMINI_API_KEY && cfg.GEMINI_API_KEY !== 'PASTE_YOUR_KEY_HERE') {
+      bundledGeminiKey = cfg.GEMINI_API_KEY;
+    }
+  })
+  .catch(() => {
+    // Absent or not an ES module — fine. The user can add a key in Settings.
+    console.info('[nupta] No extension/config.js; using keys from Settings.');
+  });
 
-function getApiConfig() {
-  const key = (typeof LCQ_CONFIG !== 'undefined' && LCQ_CONFIG.GEMINI_API_KEY) || '';
-  const model = (typeof LCQ_CONFIG !== 'undefined' && LCQ_CONFIG.GEMINI_MODEL) || DEFAULT_MODEL;
-  if (!key || key === 'PASTE_YOUR_KEY_HERE') {
-    throw new Error('Gemini API key missing. Open config.js in the extension folder and paste your key.');
+/**
+ * Resolve the API key for a provider.
+ * Precedence: the user's own key (encrypted vault) → the bundled free-tier key.
+ * Returns '' when nothing is available, so callers can fall back rather than throw.
+ */
+async function resolveKey(provider) {
+  const own = await getSecret(provider);
+  if (own) return own;
+  if (provider === 'gemini') {
+    await bundledConfigReady;
+    return bundledGeminiKey;
   }
-  return { key, model };
+  return '';
 }
 
 // Session state survives service-worker restarts via chrome.storage.session
 // (MV3 kills the worker after ~30s idle; in-memory state alone gets wiped).
-let session = { active: false, tabId: null, whisper: { status: 'idle', detail: '' } };
+function emptySession() {
+  return {
+    active: false,
+    tabId: null,
+    whisper: { status: 'idle', detail: '' },
+    // Latest playback position reported by whichever frame owns the <video>.
+    // The widget lives in the top frame, which can't reach a video inside an
+    // iframe — so the owning frame reports here and the widget reads it back.
+    video: { time: null, progress: null, at: 0 },
+    // Last hard engine failure (bad key, quota) — surfaced in the widget.
+    lastError: '',
+    // A checkpoint that still succeeded but not as configured (a locked vault,
+    // one provider down). Distinct from lastError because the success path
+    // clears errors — a degradation notice must survive that.
+    notice: '',
+  };
+}
+
+let session = emptySession();
 let sessionLoaded = false;
 
 async function getSession() {
   if (!sessionLoaded) {
     const { lcqSession } = await chrome.storage.session.get('lcqSession');
-    if (lcqSession) session = lcqSession;
+    // Merge over a fresh shape so a session stored by an older version (missing
+    // newer fields) can't leave holes that later reads assume are present.
+    if (lcqSession) session = { ...emptySession(), ...lcqSession };
     sessionLoaded = true;
   }
   return session;
@@ -88,7 +150,7 @@ async function startMonitoring(tabId) {
   await ensureOffscreenDocument();
   const res = await sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_START', streamId });
   if (!res || !res.ok) throw new Error((res && res.error) || 'Offscreen capture failed to start');
-  session = { ...session, active: true, tabId };
+  session = { ...session, active: true, tabId, lastError: '', video: { time: null, progress: null, at: 0 } };
   saveSession();
   chrome.action.setBadgeText({ text: 'ON' });
   chrome.action.setBadgeBackgroundColor({ color: '#00d4c8' });
@@ -103,7 +165,7 @@ async function stopMonitoring() {
   if (session.tabId != null) {
     try { await chrome.tabs.sendMessage(session.tabId, { type: 'MONITORING_STOPPED' }); } catch (e) {}
   }
-  session = { active: false, tabId: null, whisper: { status: 'idle', detail: '' } };
+  session = emptySession();
   saveSession();
   chrome.action.setBadgeText({ text: '' });
 }
@@ -114,137 +176,269 @@ async function stopMonitoring() {
 // transcript window resets.
 let evaluating = false;
 
+// If Gemini keeps answering "not ready" (rambling lecturer, noisy transcript),
+// the pending window would otherwise grow for the whole lecture and get re-sent
+// in full every 2 minutes. Past this many words we drop the oldest speech so the
+// prompt — and the token cost — stay bounded.
+const MAX_PROMPT_WORDS = 3000;
+
 async function handleEvaluate(tabId, isFinal = false) {
   if (evaluating) return; // an evaluation is already in flight
   evaluating = true;
   try {
-    const { key, model } = getApiConfig();
+    // Each checkpoint re-derives its own degradation state — a notice from the
+    // last one must not linger after the user fixes the cause.
+    await getSession();
+    if (session.notice) { session.notice = ''; saveSession(); }
 
-    // Peek at the transcript without consuming it.
+    // Peek at the transcript without consuming it. `seq` is an absolute
+    // position in the transcript stream, so it stays correct even if the
+    // offscreen page trims old parts while Gemini is thinking.
     const res = await sendToOffscreen({ target: 'offscreen', type: 'GET_TRANSCRIPT', consume: false });
     if (!res || !res.ok) return;
 
-    const transcript = (res.text || '').trim();
+    let transcript = (res.text || '').trim();
+    const words = transcript ? transcript.split(/\s+/) : [];
     // A quizzable subtopic needs some substance; at video end, quiz whatever remains.
-    if (transcript.split(/\s+/).length < (isFinal ? 60 : 120)) return;
+    if (words.length < (isFinal ? 60 : 120)) return;
+    // Keep the most recent speech — that's where the unquizzed subtopic is.
+    if (words.length > MAX_PROMPT_WORDS) transcript = words.slice(-MAX_PROMPT_WORDS).join(' ');
 
-    const result = await evaluateAndGenerate(transcript, key, model, isFinal);
-    if (result.ready && Array.isArray(result.questions) && result.questions.length >= 1) {
+    const result = await runCheckpoint(transcript, isFinal);
+
+    // A checkpoint fires when the gating call says a subtopic completed. The
+    // quiz may still be empty (e.g. the student turned quizzes off but left
+    // notes on) — the other outputs are still worth delivering.
+    const produced =
+      result.ready &&
+      ((result.questions || []).length ||
+        (result.summaryBullets || []).length ||
+        (result.flashcards || []).length ||
+        (result.notes || []).length);
+
+    if (produced) {
       // Consume only what we quizzed on; speech that arrived meanwhile is kept.
-      await sendToOffscreen({ target: 'offscreen', type: 'CONSUME_TRANSCRIPT', count: res.count });
-      await chrome.tabs.sendMessage(tabId, {
+      await sendToOffscreen({ target: 'offscreen', type: 'CONSUME_TRANSCRIPT', seq: res.seq });
+      await sendToTab(tabId, {
         type: 'QUIZ_READY',
-        questions: result.questions.slice(0, 2),
-        summaryBullets: result.segmentSummary,
-        keyConcepts: result.keyConcepts,
-        flashcards: result.flashcards,
+        questions: (result.questions || []).slice(0, 2),
+        summaryBullets: result.summaryBullets || [],
+        keyConcepts: result.keyConcepts || [],
+        flashcards: result.flashcards || [],
+        aiNotes: result.notes || [],
       });
+    } else if (words.length > MAX_PROMPT_WORDS) {
+      // Nothing quizzable and the window is over budget — retire the oldest
+      // speech so it isn't paid for again on every future checkpoint.
+      await sendToOffscreen({ target: 'offscreen', type: 'TRIM_TRANSCRIPT', maxWords: MAX_PROMPT_WORDS });
     }
-    // Not ready → do nothing; the next evaluation fires automatically.
+
+    // A successful round trip clears any previously shown error.
+    await getSession();
+    if (session.lastError) { session.lastError = ''; saveSession(); }
   } catch (e) {
     // Surface real failures (bad API key, quota) without pausing the lecture.
-    try { await chrome.tabs.sendMessage(tabId, { type: 'QUIZ_ERROR', error: String(e.message || e) }); } catch (_) {}
+    const error = String(e.message || e);
+    await getSession();
+    session.lastError = error;
+    saveSession();
+    try { await chrome.tabs.sendMessage(tabId, { type: 'QUIZ_ERROR', error }); } catch (_) {}
   } finally {
     evaluating = false;
   }
 }
 
-async function evaluateAndGenerate(transcript, apiKey, model, isFinal = false) {
-  const finalNote = isFinal
-    ? 'NOTE: The video has ENDED — this is the last chance to quiz. If there is ANY testable content at all, respond ready=true with 1-2 questions on what was covered. '
-    : '';
-  const prompt =
-    'You are a tutor monitoring a live video lecture, checking that the student stays attentive. ' + finalNote +
-    'Below is the (imperfect, auto-generated) transcript accumulated since the last quiz. ' +
-    'First decide: has the lecturer COMPLETED at least one coherent subtopic with enough substance to test? ' +
-    'A subtopic is complete when its explanation has clearly concluded — not mid-explanation. ' +
-    'If no subtopic is complete yet, or the content is too thin, respond with ready=false and empty arrays — the student keeps watching. ' +
-    'If 1-2 subtopics are complete, respond with ready=true and EXACTLY ONE multiple-choice question per completed subtopic (1-2 questions; if more than 2 subtopics completed, pick the 2 most important). ' +
-    'These are quick attentiveness checks, so keep questions focused on the key point of each subtopic. ' +
-    'Rules per question: name the subtopic; 4 options, exactly one correct; plausible distractors; ' +
-    'do not reference "the transcript"; ignore transcription glitches; keep questions self-contained. ' +
-    'The lecture may be in English, Hindi, or Hinglish, but ALWAYS write subtopics, questions, options, and explanations in English only. ' +
-    'Standard technical terms used by the lecturer stay as-is. ' +
-    'When (and only when) ready=true, ALSO return: segmentSummary — 1-2 concise bullet sentences capturing what was actually taught in this segment; ' +
-    'keyConcepts — 2-4 short key terms covered; flashcards — EXACTLY ONE study card per completed subtopic. ' +
-    'Flashcards must be INDEPENDENT of the quiz questions — never reuse or rephrase a quiz question. ' +
-    'Each card: subtopic = the subtopic name; front = a standalone recall prompt for its core idea ' +
-    '(e.g. "Define: X", "What is the formula for Y?", "Why is Z used?"); back = the complete, concise answer a student should recall. ' +
-    'When ready=false these three arrays must be empty.\n\nTRANSCRIPT:\n' + transcript;
+/**
+ * Run one checkpoint across however many models the user has configured.
+ *
+ * Ordering matters. The group that owns `quiz` also answers the gating
+ * question — "did a subtopic actually finish?" — because that judgement is
+ * what decides whether a checkpoint happens at all. It runs first, alone. Only
+ * if it says yes do the remaining groups run, in parallel, told that a subtopic
+ * is already confirmed complete. Two models never get to disagree about whether
+ * the checkpoint is happening, and nothing is spent on summaries or cards for a
+ * segment that turned out not to have finished a subtopic.
+ *
+ * With the default settings every feature shares one model, so there is exactly
+ * one group and this is a single API call — the original cost model, unchanged.
+ */
+async function runCheckpoint(transcript, isFinal) {
+  const settings = await loadSettings();
+  const groups = await resolveGroups(groupFeaturesByModel(settings));
+  if (!groups.length) throw new Error('Every AI feature is turned off in Nupta settings.');
 
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      temperature: 0.4,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'OBJECT',
-        properties: {
-          ready: { type: 'BOOLEAN', description: 'true only if at least one subtopic is fully covered' },
-          questions: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                subtopic: { type: 'STRING' },
-                question: { type: 'STRING' },
-                options: { type: 'ARRAY', items: { type: 'STRING' } },
-                answerIndex: { type: 'INTEGER', description: '0-based index of the correct option' },
-                explanation: { type: 'STRING' },
-              },
-              required: ['subtopic', 'question', 'options', 'answerIndex'],
-            },
-          },
-          segmentSummary: { type: 'ARRAY', items: { type: 'STRING' } },
-          keyConcepts: { type: 'ARRAY', items: { type: 'STRING' } },
-          flashcards: {
-            type: 'ARRAY',
-            items: {
-              type: 'OBJECT',
-              properties: {
-                subtopic: { type: 'STRING' },
-                front: { type: 'STRING' },
-                back: { type: 'STRING' },
-              },
-              required: ['subtopic', 'front', 'back'],
-            },
-          },
-        },
-        required: ['ready', 'questions'],
-      },
-    },
-  };
+  // The gating group is whichever one owns the quiz; absent that (quiz off),
+  // the first group takes on the decision.
+  const gateIndex = Math.max(0, groups.findIndex((g) => g.features.includes('quiz')));
+  const gate = groups[gateIndex];
+  const rest = groups.filter((_, i) => i !== gateIndex);
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Gemini API error ${resp.status}: ${errText.slice(0, 300)}`);
+  const merged = { ready: false };
+  const gateResult = await runGroup(gate, transcript, isFinal, true);
+  Object.assign(merged, gateResult);
+  if (!gateResult.ready) return merged;
+
+  if (rest.length) {
+    // One slow or failing provider must not cost the student the whole
+    // checkpoint — the gate already succeeded, so deliver what we can.
+    const others = await Promise.allSettled(
+      rest.map((g) => runGroup(g, transcript, isFinal, false))
+    );
+    others.forEach((outcome, i) => {
+      if (outcome.status === 'fulfilled') {
+        Object.assign(merged, outcome.value, { ready: true });
+      } else {
+        console.warn(`[nupta] ${rest[i].features.join('+')} failed:`, outcome.reason);
+        noteDegraded(rest[i], outcome.reason);
+      }
+    });
   }
-  const data = await resp.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) throw new Error('Gemini returned an empty response');
-
-  const result = JSON.parse(text);
-  return {
-    ready: !!result.ready,
-    questions: (result.questions || []).filter(
-      (q) => q.question && Array.isArray(q.options) && q.options.length >= 2
-    ),
-    segmentSummary: Array.isArray(result.segmentSummary) ? result.segmentSummary : [],
-    keyConcepts: Array.isArray(result.keyConcepts) ? result.keyConcepts : [],
-    flashcards: Array.isArray(result.flashcards)
-      ? result.flashcards.filter((f) => f && f.front && f.back)
-      : [],
-  };
+  return merged;
 }
+
+async function runGroup(group, transcript, isFinal, decidesReadiness) {
+  const { system, prompt, schema } = buildRequest({
+    features: group.features,
+    transcript,
+    isFinal,
+    decidesReadiness,
+  });
+  const raw = await generate({
+    provider: group.provider,
+    model: group.model,
+    apiKey: group.apiKey,
+    system,
+    prompt,
+    schema,
+  });
+  return normalize(raw, group.features);
+}
+
+/**
+ * Attach an API key to each group, falling back to the free default model when
+ * the user's own key isn't available.
+ *
+ * A locked vault or a removed key shouldn't silently stop the lecture working,
+ * and Gemini's free tier costs nothing to fall back to — so we degrade to it and
+ * say so in the status line rather than failing the checkpoint.
+ */
+async function resolveGroups(groups) {
+  const fallbackModel = getModel(DEFAULT_MODEL);
+  const resolved = [];
+  const degradedFrom = [];
+
+  for (const g of groups) {
+    const apiKey = await resolveKey(g.provider);
+    if (apiKey) {
+      resolved.push({ ...g, apiKey });
+      continue;
+    }
+    const fallbackKey = await resolveKey(fallbackModel.provider);
+    if (!fallbackKey) continue; // nothing usable at all — drop this group
+    degradedFrom.push(`${g.features.join(', ')} → ${fallbackModel.label}`);
+    resolved.push({
+      provider: fallbackModel.provider,
+      model: fallbackModel.id,
+      features: g.features,
+      apiKey: fallbackKey,
+    });
+  }
+
+  if (degradedFrom.length) {
+    const locked = (await vaultExists()) && !(await isUnlocked());
+    await setDegradedNote(
+      locked
+        ? 'Key vault is locked — using the free model until you unlock it.'
+        : `No API key for: ${degradedFrom.join('; ')}`
+    );
+  }
+
+  // Merge any groups that collapsed onto the same fallback model, so the
+  // degraded path doesn't issue two identical calls.
+  const byModel = new Map();
+  for (const g of resolved) {
+    const key = `${g.provider}:${g.model}`;
+    if (byModel.has(key)) byModel.get(key).features.push(...g.features);
+    else byModel.set(key, { ...g, features: [...g.features] });
+  }
+  return [...byModel.values()];
+}
+
+async function setDegradedNote(note) {
+  await getSession();
+  session.notice = note;
+  saveSession();
+}
+
+function noteDegraded(group, reason) {
+  const detail = String(reason?.message || reason || '').slice(0, 160);
+  setDegradedNote(`${group.features.join(' + ')}: ${detail}`);
+}
+
+/**
+ * Options-page RPC. These are the only messages that touch the vault, and they
+ * deliberately never return key material — the page can learn THAT a provider
+ * is configured, never what its key is. Editing a key is write-only from the
+ * UI's point of view.
+ */
+const settingsHandlers = {
+  SETTINGS_GET: async () => ({
+    settings: await loadSettings(),
+    catalog: { features: FEATURES, providers: PROVIDERS, models: MODELS },
+    vault: {
+      exists: await vaultExists(),
+      unlocked: await isUnlocked(),
+      // Names only. No secrets cross this boundary.
+      configured: await listConfiguredProviders(),
+      bundledGemini: !!(await bundledConfigReady.then(() => bundledGeminiKey)),
+    },
+  }),
+  SETTINGS_SAVE: async (m) => {
+    await saveSettings(m.settings);
+    return { ok: true };
+  },
+  VAULT_CREATE: async (m) => ({ ok: await createVault(m.passphrase) }),
+  VAULT_UNLOCK: async (m) => ({ ok: await unlockVault(m.passphrase) }),
+  VAULT_LOCK: async () => {
+    await lockVault();
+    return { ok: true };
+  },
+  VAULT_RESET: async () => {
+    await resetVault();
+    return { ok: true };
+  },
+  VAULT_CHANGE_PASSPHRASE: async (m) => ({
+    ok: await changePassphrase(m.current, m.next),
+  }),
+  KEY_SET: async (m) => {
+    await setSecret(m.provider, m.apiKey);
+    return { ok: true, configured: await listConfiguredProviders() };
+  },
+  KEY_VERIFY: async (m) => {
+    // Verify the key the user just typed, before storing it, so a typo is
+    // caught here rather than mid-lecture.
+    const key = m.apiKey || (await getSecret(m.provider));
+    await verifyKey(m.provider, key);
+    return { ok: true };
+  },
+};
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.target === 'offscreen') return; // offscreen handles its own
+
+  const settingsHandler = settingsHandlers[message.type];
+  if (settingsHandler) {
+    // Only the extension's own pages may reach the vault. A content script has
+    // a `sender.tab`; the options page does not — that's the boundary.
+    if (sender.tab) {
+      sendResponse({ ok: false, error: 'Not permitted from a page.' });
+      return false;
+    }
+    settingsHandler(message)
+      .then((res) => sendResponse({ ok: true, ...res }))
+      .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
 
   switch (message.type) {
     case 'START_MONITORING':
@@ -276,6 +470,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         saveSession();
       });
       return false;
+
+    // Whichever frame owns the <video> reports playback position here, so the
+    // widget in the top frame can show progress and timestamp notes even when
+    // the player lives inside an iframe.
+    case 'VIDEO_TIME': {
+      const senderTabId = sender.tab && sender.tab.id;
+      getSession().then((s) => {
+        if (!s.active || senderTabId !== s.tabId) return;
+        session.video = {
+          time: typeof message.time === 'number' ? message.time : null,
+          progress: typeof message.progress === 'number' ? message.progress : null,
+          at: Date.now(),
+        };
+        saveSession();
+      });
+      return false;
+    }
 
     case 'EVALUATE': {
       const tabId = sender.tab && sender.tab.id;
@@ -324,10 +535,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 chrome.action.onClicked.addListener(async (tab) => {
   await getSession();
   try {
-    if (session.active) {
-      await stopMonitoring();
-    } else if (tab && tab.id != null) {
-      await startMonitoring(tab.id);
+    if (!tab || tab.id == null) return;
+    if (session.active && session.tabId === tab.id) {
+      await stopMonitoring();          // clicking the monitored tab turns it off
+    } else {
+      await startMonitoring(tab.id);   // a different tab moves monitoring there
     }
   } catch (e) {
     chrome.action.setBadgeText({ text: 'ERR' });

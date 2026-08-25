@@ -11,9 +11,21 @@ import { initTracker } from './videoTracker';
 import indexCss from '../index.css?inline';
 import gooeyCss from '../components/GooeyNav.css?inline';
 
-initTracker();
+// The background re-injects this bundle with chrome.scripting when a tab has no
+// listener yet, which can land in frames that already run it. Without this guard
+// the second copy registers a second tracker, and every EVALUATE gets sent twice.
+declare global {
+  interface Window { __nuptaInjected?: boolean }
+}
 
-if (window.top === window && !document.getElementById('nupta-host')) {
+if (!window.__nuptaInjected) {
+  window.__nuptaInjected = true;
+  initTracker();
+  mountWidget();
+}
+
+function mountWidget() {
+  if (window.top !== window || document.getElementById('nupta-host')) return;
   const host = document.createElement('div');
   host.id = 'nupta-host';
   host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';

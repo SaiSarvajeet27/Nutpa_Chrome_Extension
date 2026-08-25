@@ -12,13 +12,14 @@ import type { Flashcard as UICard } from '../components/tabs/FlashcardsTab';
 import { getCurrentTime, getProgress } from './videoTracker';
 import {
   loadLecture,
-  saveLecture,
   loadCards,
-  saveCards,
+  updateCards,
+  updateLecture,
   makeCard,
   rateCard,
   dueLabel,
   getReviewDay,
+  videoKey,
 } from './storage';
 import type { LectureData, Flashcard } from './storage';
 
@@ -54,6 +55,16 @@ function fmtTime(t: number | null | undefined): string {
     : `${m}:${String(s).padStart(2, '0')}`;
 }
 
+/** How often the widget asks the engine for status while monitoring this tab. */
+const ACTIVE_POLL_MS = 2000;
+/**
+ * The content script is injected into every page, so an idle tab must cost
+ * next to nothing. Until this tab is the monitored one we only listen for the
+ * pushed MONITORING_STARTED message and check in rarely, purely to recover if
+ * that push was missed (e.g. this page loaded mid-session).
+ */
+const IDLE_POLL_MS = 30000;
+
 const ContentApp: React.FC = () => {
   const [questions, setQuestions] = useState<FocusQuestion[] | null>(null);
   const [monitoring, setMonitoring] = useState(false);
@@ -65,6 +76,9 @@ const ContentApp: React.FC = () => {
   const [quizWarning, setQuizWarning] = useState(false);
   const lastHrefRef = useRef(location.href);
   const warnTimerRef = useRef<number | null>(null);
+  // Playback position reported by whichever frame owns the <video>; used when
+  // the player sits in an iframe and this frame's tracker has no video.
+  const remoteTimeRef = useRef<number | null>(null);
 
   // Restore persisted data for this lecture + the global deck.
   useEffect(() => {
@@ -74,6 +88,10 @@ const ContentApp: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Assigned once the poll loop below is defined; lets pushed messages pull
+    // the next status check forward instead of waiting out the idle interval.
+    let pollNow = () => {};
+
     // Persist the piggybacked engine outputs (summary bullets, concepts,
     // Gemini-suggested flashcards). Storage-first: always merge against the
     // freshest stored copy, never against possibly-stale component state.
@@ -81,18 +99,20 @@ const ContentApp: React.FC = () => {
       const bullets: string[] = Array.isArray(message.summaryBullets) ? message.summaryBullets : [];
       const concepts: string[] = Array.isArray(message.keyConcepts) ? message.keyConcepts : [];
       if (bullets.length || concepts.length) {
-        const lec = await loadLecture();
-        const nb = bullets.filter(b => b && !lec.summary.bullets.includes(b));
-        const nc = concepts.filter(c => c && !lec.summary.concepts.includes(c));
-        if (nb.length || nc.length) {
-          lec.summary = {
-            bullets: [...lec.summary.bullets, ...nb],
-            concepts: [...lec.summary.concepts, ...nc],
-            updatedAt: Date.now(),
+        const lec = await updateLecture(cur => {
+          const nb = bullets.filter(b => b && !cur.summary.bullets.includes(b));
+          const nc = concepts.filter(c => c && !cur.summary.concepts.includes(c));
+          if (!nb.length && !nc.length) return cur;
+          return {
+            ...cur,
+            summary: {
+              bullets: [...cur.summary.bullets, ...nb],
+              concepts: [...cur.summary.concepts, ...nc],
+              updatedAt: Date.now(),
+            },
           };
-          await saveLecture(lec);
-          setLecture({ ...lec });
-        }
+        });
+        setLecture({ ...lec });
       }
 
       const fcs: { subtopic?: string; front?: string; back?: string }[] = Array.isArray(
@@ -100,25 +120,53 @@ const ContentApp: React.FC = () => {
       )
         ? message.flashcards
         : [];
+      // Auto-notes: one note per point, tagged to its subtopic and stamped with
+      // the position the lecture had reached. They land in the same list as the
+      // student's own notes but stay visually distinct.
+      const aiNotes: { subtopic?: string; points?: string[] }[] = Array.isArray(message.aiNotes)
+        ? message.aiNotes
+        : [];
+      if (aiNotes.length) {
+        const tSec = getCurrentTime() ?? remoteTimeRef.current;
+        const lec = await updateLecture(cur => {
+          const existing = new Set(cur.notes.map(n => n.text));
+          const fresh = aiNotes.flatMap(n =>
+            (n.points || [])
+              .filter(p => p && !existing.has(p))
+              .map((p, i) => ({
+                id: `ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${i}`,
+                tSec,
+                text: p,
+                createdAt: Date.now(),
+                ai: true,
+                subtopic: n.subtopic || undefined,
+              }))
+          );
+          return fresh.length ? { ...cur, notes: [...fresh, ...cur.notes] } : cur;
+        });
+        setLecture({ ...lec });
+      }
+
       if (fcs.length) {
-        const all = await loadCards();
-        // One card per subtopic: dedupe on subtopic first, then on front text.
-        const subtopics = new Set(all.map(c => (c.subtopic || '').toLowerCase()).filter(Boolean));
-        const fronts = new Set(all.map(c => c.front));
-        const added = fcs
-          .filter(
-            f =>
-              f.front &&
-              f.back &&
-              !fronts.has(f.front) &&
-              !(f.subtopic && subtopics.has(f.subtopic.toLowerCase()))
-          )
-          .map(f => makeCard(f.front as string, f.back as string, f.subtopic));
-        if (added.length) {
-          const merged = [...all, ...added];
-          await saveCards(merged);
-          setCards(merged);
-        }
+        const merged = await updateCards(all => {
+          const thisLecture = videoKey();
+          // One card per subtopic, scoped to THIS lecture — two courses may both
+          // cover "Fourier Transform" and each deserves its own card.
+          const mine = all.filter(c => c.videoKey === thisLecture);
+          const subtopics = new Set(mine.map(c => (c.subtopic || '').toLowerCase()).filter(Boolean));
+          const fronts = new Set(mine.map(c => c.front));
+          const added = fcs
+            .filter(
+              f =>
+                f.front &&
+                f.back &&
+                !fronts.has(f.front) &&
+                !(f.subtopic && subtopics.has(f.subtopic.toLowerCase()))
+            )
+            .map(f => makeCard(f.front as string, f.back as string, f.subtopic));
+          return added.length ? [...all, ...added] : all;
+        });
+        setCards(merged);
       }
     };
 
@@ -126,6 +174,7 @@ const ContentApp: React.FC = () => {
       switch (message && message.type) {
         case 'MONITORING_STARTED':
           setMonitoring(true);
+          pollNow(); // switch from the idle cadence to the active one at once
           break;
         case 'MONITORING_STOPPED':
           setMonitoring(false);
@@ -158,39 +207,78 @@ const ContentApp: React.FC = () => {
           break;
       }
     };
-    chrome.runtime.onMessage.addListener(listener);
+    // GET_STATUS also self-heals the monitoring flag if this page loaded after
+    // monitoring started, and carries the video position reported by whichever
+    // frame owns the player.
+    let cancelled = false;
+    const checkStatus = () =>
+      new Promise<boolean>(resolve => {
+        try {
+          chrome.runtime
+            .sendMessage({ type: 'GET_STATUS' })
+            .then((res: any) => {
+              if (cancelled || !res || !res.ok || !res.session) return resolve(false);
+              const active = !!res.activeHere;
+              setMonitoring(active);
+              const w = res.session.whisper || {};
+              const whisperLine =
+                w.status && w.status !== 'idle' && w.status !== 'stopped' ? w.detail || w.status : '';
+              // A hard failure outranks a degradation notice, which outranks
+              // the routine "listening" line.
+              setEngineStatus(res.session.lastError || res.session.notice || whisperLine);
+              const v = res.session.video || {};
+              remoteTimeRef.current = typeof v.time === 'number' ? v.time : null;
+              if (typeof v.progress === 'number') setProgress(v.progress);
+              resolve(active);
+            })
+            .catch(() => resolve(false));
+        } catch {
+          resolve(false); // extension reloaded
+        }
+      });
 
-    // Poll playback progress + engine status. GET_STATUS also self-heals the
-    // monitoring flag if this page loaded after monitoring started.
-    const poll = window.setInterval(() => {
-      // SPA navigation (YouTube next video): switch to the new lecture's data.
-      if (location.href !== lastHrefRef.current) {
-        lastHrefRef.current = location.href;
-        loadLecture().then(setLecture);
-        setQuestions(null);
-      }
-      const p = getProgress();
-      if (p !== null) setProgress(p);
+    // Self-rescheduling poll: fast while this tab is monitored, near-idle
+    // otherwise, so the widget costs nothing on the other tabs it's injected into.
+    let timer = 0;
+    let running = false;
+    const tick = async () => {
+      // A poll is already in flight — it will reschedule itself, and starting a
+      // second loop here would leave two running against one `timer`.
+      if (running) return;
+      running = true;
       try {
-        chrome.runtime
-          .sendMessage({ type: 'GET_STATUS' })
-          .then((res: any) => {
-            if (!res || !res.ok || !res.session) return;
-            setMonitoring(!!res.activeHere);
-            const w = res.session.whisper || {};
-            setEngineStatus(
-              w.status && w.status !== 'idle' && w.status !== 'stopped' ? w.detail || w.status : ''
-            );
-          })
-          .catch(() => {});
-      } catch {
-        /* extension reloaded */
+        // SPA navigation (YouTube next video): switch to the new lecture's data.
+        if (location.href !== lastHrefRef.current) {
+          lastHrefRef.current = location.href;
+          loadLecture().then(setLecture);
+          setQuestions(null);
+        }
+        // A video in this frame is authoritative; otherwise GET_STATUS filled in.
+        const p = getProgress();
+        if (p !== null) setProgress(p);
+
+        const active = await checkStatus();
+        if (cancelled) return;
+        timer = window.setTimeout(tick, active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+      } finally {
+        running = false;
       }
-    }, 2000);
+    };
+
+    // Bring the next poll forward — used when a pushed message tells us the
+    // session changed and the idle cadence would otherwise lag 30s behind.
+    pollNow = () => {
+      clearTimeout(timer);
+      tick();
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    tick();
 
     return () => {
+      cancelled = true;
       chrome.runtime.onMessage.removeListener(listener);
-      clearInterval(poll);
+      clearTimeout(timer);
       if (warnTimerRef.current) clearTimeout(warnTimerRef.current);
     };
   }, []);
@@ -217,23 +305,27 @@ const ContentApp: React.FC = () => {
   // subtopic needs review NOW. If no card exists yet, create one for it.)
   const handleWrongAnswer = useCallback((q: FocusQuestion) => {
     (async () => {
-      const all = await loadCards();
-      const sub = (q.subtopic || '').toLowerCase();
-      const idx = sub ? all.findIndex(c => (c.subtopic || '').toLowerCase() === sub) : -1;
-      if (idx >= 0) {
-        all[idx] = { ...all[idx], intervalDays: 0, nextReview: Date.now() };
-        await saveCards(all);
-        setCards([...all]);
-        return;
-      }
-      const front = q.subtopic ? `Explain: ${q.subtopic}` : q.question;
-      if (all.some(c => c.front === front)) return;
-      const correct = q.options.find(o => o.key === q.correctKey);
-      const back =
-        `${correct ? correct.text : ''}${q.explanation ? ` — ${q.explanation}` : ''}` ||
-        'Revisit this part of the lecture.';
-      const merged = [...all, makeCard(front, back, q.subtopic)];
-      await saveCards(merged);
+      const merged = await updateCards(all => {
+        const thisLecture = videoKey();
+        const sub = (q.subtopic || '').toLowerCase();
+        // Match within this lecture only; an identically-named subtopic from a
+        // different course is a different card.
+        const idx = sub
+          ? all.findIndex(c => c.videoKey === thisLecture && (c.subtopic || '').toLowerCase() === sub)
+          : -1;
+        if (idx >= 0) {
+          const next = [...all];
+          next[idx] = { ...next[idx], intervalDays: 0, nextReview: Date.now() };
+          return next;
+        }
+        const front = q.subtopic ? `Explain: ${q.subtopic}` : q.question;
+        if (all.some(c => c.videoKey === thisLecture && c.front === front)) return all;
+        const correct = q.options.find(o => o.key === q.correctKey);
+        const back =
+          `${correct ? correct.text : ''}${q.explanation ? ` — ${q.explanation}` : ''}`.trim() ||
+          'Revisit this part of the lecture.';
+        return [...all, makeCard(front, back, q.subtopic)];
+      });
       setCards(merged);
     })();
   }, []);
@@ -241,21 +333,26 @@ const ContentApp: React.FC = () => {
   // ── Notes (persisted per lecture, tagged with the video position) ──
   const handleAddNote = useCallback((text: string) => {
     (async () => {
-      const lec = await loadLecture();
-      lec.notes = [
-        { id: `${Date.now()}`, tSec: getCurrentTime(), text, createdAt: Date.now() },
-        ...lec.notes,
-      ];
-      await saveLecture(lec);
+      // getCurrentTime() only sees a video in THIS frame; for an embedded
+      // player fall back to the position the owning frame reported.
+      const tSec = getCurrentTime() ?? remoteTimeRef.current;
+      const lec = await updateLecture(cur => ({
+        ...cur,
+        notes: [
+          { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, tSec, text, createdAt: Date.now() },
+          ...cur.notes,
+        ],
+      }));
       setLecture({ ...lec });
     })();
   }, []);
 
   const handleDeleteNote = useCallback((id: string) => {
     (async () => {
-      const lec = await loadLecture();
-      lec.notes = lec.notes.filter(n => n.id !== id);
-      await saveLecture(lec);
+      const lec = await updateLecture(cur => ({
+        ...cur,
+        notes: cur.notes.filter(n => n.id !== id),
+      }));
       setLecture({ ...lec });
     })();
   }, []);
@@ -271,12 +368,14 @@ const ContentApp: React.FC = () => {
   // ── Flashcards (SM-2 lite scheduling, persisted globally) ──
   const handleRateCard = useCallback((id: string, rating: 'easy' | 'hard') => {
     (async () => {
-      const all = await loadCards();
-      const idx = all.findIndex(c => c.id === id);
-      if (idx < 0) return;
-      all[idx] = rateCard(all[idx], rating);
-      await saveCards(all);
-      setCards([...all]);
+      const next = await updateCards(all => {
+        const idx = all.findIndex(c => c.id === id);
+        if (idx < 0) return all;
+        const updated = [...all];
+        updated[idx] = rateCard(updated[idx], rating);
+        return updated;
+      });
+      setCards(next);
     })();
   }, []);
 
@@ -288,6 +387,8 @@ const ContentApp: React.FC = () => {
             timestamp: fmtTime(n.tSec),
             tSec: n.tSec,
             text: n.text,
+            ai: n.ai,
+            subtopic: n.subtopic,
           }))
         : [],
     [lecture]

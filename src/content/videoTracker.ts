@@ -4,6 +4,7 @@
 // coordinate through the background service worker.
 
 const EVAL_INTERVAL_SECONDS = 120; // how often we ask "is there enough content yet?"
+const TIME_REPORT_INTERVAL_MS = 2000; // matches the widget's status poll
 
 let monitoring = false;
 let video: HTMLVideoElement | null = null;
@@ -11,6 +12,7 @@ let watchedSeconds = 0;
 let lastTime: number | null = null;
 let quizActive = false;
 let rescanTimer: number | null = null;
+let lastTimeReport = 0;
 
 function safeSend(message: Record<string, unknown>) {
   try {
@@ -41,6 +43,14 @@ function onTimeUpdate() {
     if (delta > 0 && delta < 2) watchedSeconds += delta;
   }
   lastTime = t;
+
+  // Publish position for the widget, which lives in the top frame and can't
+  // reach this <video> when the player is inside an iframe.
+  const now = Date.now();
+  if (now - lastTimeReport >= TIME_REPORT_INTERVAL_MS) {
+    lastTimeReport = now;
+    safeSend({ type: 'VIDEO_TIME', time: t, progress: getProgress() });
+  }
 
   if (watchedSeconds >= EVAL_INTERVAL_SECONDS) {
     watchedSeconds = 0;
@@ -73,6 +83,7 @@ function start() {
   if (monitoring) return;
   monitoring = true;
   watchedSeconds = 0;
+  lastTimeReport = 0; // report position on the very first tick
   attach(findMainVideo());
   // Handle SPAs (YouTube etc.): periodically re-check that we're on the right <video>.
   rescanTimer = window.setInterval(() => {

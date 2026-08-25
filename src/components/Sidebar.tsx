@@ -192,7 +192,10 @@ const Sidebar: React.FC<SidebarProps> = ({
       window.removeEventListener('touchend', handleTouchEnd);
       window.removeEventListener('resize', handleResize);
     };
-  }, [buttonPos]);
+    // Every handler works off refs or functional setState, so this binds once.
+    // Depending on buttonPos here would re-register all five listeners on each
+    // pointer move during a drag.
+  }, []);
 
   // Resizing event handlers
   const handleResizeMouseDown = (e: React.MouseEvent) => {

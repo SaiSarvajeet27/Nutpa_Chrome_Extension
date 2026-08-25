@@ -7,6 +7,10 @@ export interface Note {
   /** Seconds into the video (null/undefined = position unknown). */
   tSec?: number | null;
   text: string;
+  /** Written by the auto-notes feature rather than typed by the student. */
+  ai?: boolean;
+  /** Subtopic an AI note came from. */
+  subtopic?: string;
 }
 
 interface NotesTabProps {
@@ -29,12 +33,15 @@ const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek }) =
   const [localNotes, setLocalNotes] = useState<Note[]>(demoNotes);
   const [noteText, setNoteText] = useState('');
   const [copied, setCopied] = useState(false);
-  const list = live ? (notes as Note[]) : localNotes;
+  const [showAi, setShowAi] = useState(true);
+  const all = live ? (notes as Note[]) : localNotes;
+  const aiCount = all.filter(n => n.ai).length;
+  const list = showAi ? all : all.filter(n => !n.ai);
 
   const handleCopyAll = () => {
     const text = [...list]
       .reverse() // chronological order for export
-      .map(n => `[${n.timestamp}] ${n.text}`)
+      .map(n => `[${n.timestamp}]${n.ai ? ' ✦' : ''} ${n.text}`)
       .join('\n');
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
@@ -82,6 +89,19 @@ const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek }) =
           Ctrl+Enter to save{live ? ' — tagged with the video time' : ''}
         </span>
         <div className="flex items-center gap-2">
+          {aiCount > 0 && (
+            <button
+              onClick={() => setShowAi(v => !v)}
+              title={showAi ? 'Hide auto-generated notes' : 'Show auto-generated notes'}
+              className={`px-2 py-1.5 rounded-lg border text-xs transition-colors ${
+                showAi
+                  ? 'bg-[#8b5cf6]/10 border-[#8b5cf6]/30 text-[#a78bfa]'
+                  : 'bg-[#0a0f1e] border-[#1e293b] text-[#94a3b8] hover:text-white'
+              }`}
+            >
+              ✦ {aiCount}
+            </button>
+          )}
           {list.length > 0 && (
             <button
               onClick={handleCopyAll}
@@ -113,7 +133,11 @@ const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek }) =
         {list.map(note => (
           <div
             key={note.id}
-            className="group bg-[#0d1b2a] border border-[#1e293b] rounded-xl px-3 py-2.5 flex items-start gap-3"
+            className={`group rounded-xl px-3 py-2.5 flex items-start gap-3 border ${
+              note.ai
+                ? 'bg-[#8b5cf6]/[0.07] border-[#8b5cf6]/25'
+                : 'bg-[#0d1b2a] border-[#1e293b]'
+            }`}
           >
             <button
               onClick={() => { if (note.tSec != null && onSeek) onSeek(note.tSec); }}
@@ -127,7 +151,19 @@ const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek }) =
             >
               {note.timestamp}
             </button>
-            <p className="text-[#cbd5e1] text-xs leading-relaxed flex-1">{note.text}</p>
+            <div className="flex-1 min-w-0">
+              {note.ai && (
+                <div className="flex items-center gap-1.5 mb-1">
+                  <span className="text-[#a78bfa] text-[10px] font-semibold tracking-wide">
+                    ✦ AUTO
+                  </span>
+                  {note.subtopic && (
+                    <span className="text-[#94a3b8]/70 text-[10px] truncate">{note.subtopic}</span>
+                  )}
+                </div>
+              )}
+              <p className="text-[#cbd5e1] text-xs leading-relaxed">{note.text}</p>
+            </div>
             <button
               onClick={() => handleDelete(note.id)}
               className="flex-shrink-0 text-[#94a3b8]/40 hover:text-red-400 text-sm leading-none opacity-0 group-hover:opacity-100 transition-opacity"
