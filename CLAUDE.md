@@ -18,13 +18,13 @@ auto-building notes, a summary, and spaced-repetition flashcards.
    extension in `chrome://extensions` (click ↻) and reload the lecture tab.
 
 2. **`extension/config.js` is an optional default Gemini key and is gitignored.** Never commit it,
-   never print the key. It is a fallback only — a key entered in Settings always wins, and it must
+   never print the key. It is a fallback only — a key entered on the API keys screen always wins, and it must
    be an **ES module** (`export const LCQ_CONFIG = …`) because the service worker imports it.
-   Everything still runs without it; the user just adds keys in Settings instead.
+   Everything still runs without it; the user just adds keys on the API keys screen instead.
 
 3. **The other `extension/` files ARE the shipped extension and are edited directly** (they're
    plain JS/HTML, not built): `background.js`, `models.js`, `providers.js`, `checkpoint.js`,
-   `vault.js`, `options.*`, `offscreen.js`, `offscreen.html`, `pcm-worklet.js`, `manifest.json`.
+   `keys.js`, `options.*`, `offscreen.js`, `offscreen.html`, `pcm-worklet.js`, `manifest.json`.
    Only `content.js` comes from a build. The service worker is `"type": "module"`, so these use
    real `import`/`export` — not `importScripts`.
 
@@ -63,7 +63,7 @@ extension/                     the loadable extension (Load unpacked → here)
   checkpoint.js                canonical prompt + JSON Schema per feature; response normalization
   keys.js                      plain per-provider API key storage (chrome.storage.local)
   options.html/.css/.js        API keys screen
-  *.test.js                    vitest suites for the engine and the vault
+  *.test.js                    vitest suites for the engine and key storage
   offscreen.js / offscreen.html  local Whisper transcription (offscreen document)
   pcm-worklet.js               AudioWorklet that forwards PCM to the offscreen page
   content.js                   ⚙️ BUILT bundle of src/content/* + components — DO NOT EDIT
@@ -112,7 +112,7 @@ panel auto-opens on Focus → answer/skip → `RESUME_VIDEO`.
 ## Multi-model routing (how a checkpoint actually runs)
 
 Each of the four AI features — `quiz`, `summary`, `flashcards`, `notes` — is independently
-assigned a model in Settings. `background.js` then:
+assigned a model from that tab's dropdown. `background.js` then:
 
 1. `groupFeaturesByModel()` buckets the **enabled** features by the model serving them.
 2. The group owning `quiz` runs **first, alone**, and answers the gating question ("did a subtopic
