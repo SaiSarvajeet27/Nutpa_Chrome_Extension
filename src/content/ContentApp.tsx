@@ -59,11 +59,15 @@ function fmtTime(t: number | null | undefined): string {
 const ACTIVE_POLL_MS = 2000;
 /**
  * The content script is injected into every page, so an idle tab must cost
- * next to nothing. Until this tab is the monitored one we only listen for the
- * pushed MONITORING_STARTED message and check in rarely, purely to recover if
- * that push was missed (e.g. this page loaded mid-session).
+ * next to nothing. But a freshly injected script may have MISSED the pushed
+ * MONITORING_STARTED — that's exactly the case where the user is staring at the
+ * page waiting for the ball. So start responsive and back off geometrically:
+ * a just-loaded script finds an active session in ~2s, while a tab left open on
+ * some unrelated site settles at one cheap check every 30s.
  */
-const IDLE_POLL_MS = 30000;
+const IDLE_POLL_START_MS = 2000;
+const IDLE_POLL_MAX_MS = 30000;
+const IDLE_BACKOFF = 1.6;
 
 const ContentApp: React.FC = () => {
   const [questions, setQuestions] = useState<FocusQuestion[] | null>(null);
@@ -241,6 +245,7 @@ const ContentApp: React.FC = () => {
     // otherwise, so the widget costs nothing on the other tabs it's injected into.
     let timer = 0;
     let running = false;
+    let idleDelay = IDLE_POLL_START_MS;
     const tick = async () => {
       // A poll is already in flight — it will reschedule itself, and starting a
       // second loop here would leave two running against one `timer`.
@@ -259,7 +264,11 @@ const ContentApp: React.FC = () => {
 
         const active = await checkStatus();
         if (cancelled) return;
-        timer = window.setTimeout(tick, active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+        // Reset the backoff on every active tick, so stopping and restarting
+        // monitoring finds the ball quickly again.
+        if (active) idleDelay = IDLE_POLL_START_MS;
+        else idleDelay = Math.min(idleDelay * IDLE_BACKOFF, IDLE_POLL_MAX_MS);
+        timer = window.setTimeout(tick, active ? ACTIVE_POLL_MS : idleDelay);
       } finally {
         running = false;
       }

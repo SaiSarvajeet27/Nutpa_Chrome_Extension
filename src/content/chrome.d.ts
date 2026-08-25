@@ -1,6 +1,8 @@
 // Minimal chrome typing for the content script (avoids @types/chrome dependency).
 declare const chrome: {
   runtime: {
+    /** Undefined once this content script's extension context is orphaned. */
+    id?: string;
     sendMessage: (message: unknown) => Promise<unknown>;
     onMessage: {
       addListener: (cb: (message: any, sender: any, sendResponse: (r?: unknown) => void) => void) => void;

@@ -11,21 +11,53 @@ import { initTracker } from './videoTracker';
 import indexCss from '../index.css?inline';
 import gooeyCss from '../components/GooeyNav.css?inline';
 
-// The background re-injects this bundle with chrome.scripting when a tab has no
-// listener yet, which can land in frames that already run it. Without this guard
-// the second copy registers a second tracker, and every EVALUATE gets sent twice.
+// This bundle can run twice in one frame, for two very different reasons, and
+// telling them apart is the whole job of the probe below:
+//
+//   1. The background re-injects via chrome.scripting when a tab has no
+//      listener, which also lands in frames that are already running a LIVE
+//      copy. The second copy must stand down, or every EVALUATE fires twice.
+//   2. The extension was reloaded while this page stayed open. The previous
+//      copy is orphaned — its chrome.* APIs are dead and its listeners never
+//      fire again — but anything it left on `window` survives. The new copy
+//      MUST take over, or the widget never comes back until a page reload.
+//
+// A boolean "already injected" flag cannot tell these apart, and treating (2)
+// as (1) is why the ball would silently fail to appear after reloading the
+// extension. So each instance leaves behind a probe that reports whether its
+// own extension context is still alive.
 declare global {
-  interface Window { __nuptaInjected?: boolean }
+  interface Window { __nuptaAlive?: () => boolean }
 }
 
-if (!window.__nuptaInjected) {
-  window.__nuptaInjected = true;
+const previousStillAlive = (() => {
+  try {
+    return typeof window.__nuptaAlive === 'function' && window.__nuptaAlive();
+  } catch {
+    return false; // probe belonged to a dead context
+  }
+})();
+
+if (!previousStillAlive) {
+  // Closes over THIS instance's chrome reference: once this context is
+  // orphaned, chrome.runtime.id goes undefined and the probe reports false.
+  window.__nuptaAlive = () => {
+    try {
+      return !!chrome.runtime?.id;
+    } catch {
+      return false;
+    }
+  };
+  // A dead predecessor may have left its ball in the DOM, wired to listeners
+  // that no longer fire. Clear it out before mounting a working one.
+  document.getElementById('nupta-host')?.remove();
+
   initTracker();
   mountWidget();
 }
 
 function mountWidget() {
-  if (window.top !== window || document.getElementById('nupta-host')) return;
+  if (window.top !== window) return;
   const host = document.createElement('div');
   host.id = 'nupta-host';
   host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;';

@@ -154,7 +154,14 @@ async function startMonitoring(tabId) {
   saveSession();
   chrome.action.setBadgeText({ text: 'ON' });
   chrome.action.setBadgeBackgroundColor({ color: '#00d4c8' });
-  await sendToTab(tabId, { type: 'MONITORING_STARTED' });
+  // Best-effort: capture is already running, and the widget also discovers the
+  // session on its own via GET_STATUS. Failing the whole start here would
+  // report an error for a session that is, in fact, live.
+  try {
+    await sendToTab(tabId, { type: 'MONITORING_STARTED' });
+  } catch (e) {
+    console.warn('[nupta] Could not notify the tab; the widget will pick it up on its next poll.', e);
+  }
 }
 
 async function stopMonitoring() {
