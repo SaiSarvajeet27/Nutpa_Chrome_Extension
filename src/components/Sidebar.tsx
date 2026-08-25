@@ -6,11 +6,13 @@ import type { Note } from './tabs/NotesTab';
 import SummaryTab from './tabs/SummaryTab';
 import type { SummaryData } from './tabs/SummaryTab';
 import FlashcardsTab from './tabs/FlashcardsTab';
+import SettingsTab from './tabs/SettingsTab';
+import type { SettingsState } from './tabs/SettingsTab';
 import type { Flashcard } from './tabs/FlashcardsTab';
 import GooeyNav from './GooeyNav';
 import logoImg from '../assets/logo.png';
 
-type TabId = 'focus' | 'notes' | 'summary' | 'cards';
+type TabId = 'focus' | 'notes' | 'summary' | 'cards' | 'settings';
 
 /**
  * Manifest version, shown in the header. Reading it here (rather than baking a
@@ -55,8 +57,15 @@ export interface SidebarProps {
   quizPending?: boolean;
   /** Renders a Stop button in the bottom bar (stops monitoring). */
   onStopMonitoring?: () => void;
-  /** Opens the extension's Settings page (model picker + API keys). */
-  onOpenSettings?: () => void;
+  /** Live settings state for the in-panel Settings tab. */
+  settingsState?: SettingsState | null;
+  onSaveSettings?: (s: SettingsState['settings']) => Promise<void>;
+  onCreateVault?: (passphrase: string) => Promise<void>;
+  onUnlockVault?: (passphrase: string) => Promise<void>;
+  onLockVault?: () => Promise<void>;
+  onSaveKey?: (provider: string, apiKey: string) => Promise<void>;
+  onRemoveKey?: (provider: string) => Promise<void>;
+  onRefreshSettings?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -78,7 +87,14 @@ const Sidebar: React.FC<SidebarProps> = ({
   onWrongAnswer,
   quizPending,
   onStopMonitoring,
-  onOpenSettings,
+  settingsState,
+  onSaveSettings,
+  onCreateVault,
+  onUnlockVault,
+  onLockVault,
+  onSaveKey,
+  onRemoveKey,
+  onRefreshSettings,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TabId>('focus');
@@ -397,7 +413,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         }}
       >
         {/* Header */}
-        <SidebarHeader onOpenSettings={onOpenSettings} />
+        <SidebarHeader onOpenSettings={() => setActiveTab('settings')} />
 
         {/* Tab bar */}
         <div className="flex-shrink-0 px-3 py-2">
@@ -406,11 +422,12 @@ const Sidebar: React.FC<SidebarProps> = ({
               { label: 'Focus', href: '#' },
               { label: 'Notes', href: '#' },
               { label: 'Summary', href: '#' },
-              { label: 'Cards', href: '#' }
+              { label: 'Cards', href: '#' },
+              { label: 'Setup', href: '#' }
             ]}
-            activeIndex={['focus', 'notes', 'summary', 'cards'].indexOf(activeTab)}
+            activeIndex={['focus', 'notes', 'summary', 'cards', 'settings'].indexOf(activeTab)}
             onChange={(index) => {
-              const tabs: TabId[] = ['focus', 'notes', 'summary', 'cards'];
+              const tabs: TabId[] = ['focus', 'notes', 'summary', 'cards', 'settings'];
               setActiveTab(tabs[index]);
             }}
             animationTime={300}
@@ -438,6 +455,18 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div className="h-full" style={{ display: activeTab === 'cards' ? 'block' : 'none' }}>
             <FlashcardsTab cards={cards} onRate={onRateCard} />
+          </div>
+          <div className="h-full" style={{ display: activeTab === 'settings' ? 'block' : 'none' }}>
+            <SettingsTab
+              state={settingsState}
+              onSaveSettings={onSaveSettings}
+              onCreateVault={onCreateVault}
+              onUnlockVault={onUnlockVault}
+              onLockVault={onLockVault}
+              onSaveKey={onSaveKey}
+              onRemoveKey={onRemoveKey}
+              onRefresh={onRefreshSettings}
+            />
           </div>
         </div>
 

@@ -9,6 +9,7 @@ import type { FocusQuestion } from '../components/tabs/FocusTab';
 import type { Note } from '../components/tabs/NotesTab';
 import type { SummaryData } from '../components/tabs/SummaryTab';
 import type { Flashcard as UICard } from '../components/tabs/FlashcardsTab';
+import type { SettingsState } from '../components/tabs/SettingsTab';
 import { getCurrentTime, getProgress } from './videoTracker';
 import {
   loadLecture,
@@ -78,6 +79,7 @@ const ContentApp: React.FC = () => {
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [reviewDay, setReviewDay] = useState(1);
   const [quizWarning, setQuizWarning] = useState(false);
+  const [settingsState, setSettingsState] = useState<SettingsState | null>(null);
   const lastHrefRef = useRef(location.href);
   const warnTimerRef = useRef<number | null>(null);
   // Playback position reported by whichever frame owns the <video>; used when
@@ -300,15 +302,70 @@ const ContentApp: React.FC = () => {
     }
   }, []);
 
-  // Content scripts can't call chrome.runtime.openOptionsPage themselves —
-  // the background relays it.
-  const handleOpenSettings = useCallback(() => {
-    try {
-      chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS' }).catch(() => {});
-    } catch {
-      /* extension reloaded */
-    }
+  // ── Settings / key vault, driven from the in-panel Setup tab ──
+  // Every call is a one-way write or a status read; the engine never returns
+  // key material, so nothing secret is ever held in this component's state.
+  const rpc = useCallback(async (type: string, payload: Record<string, unknown> = {}) => {
+    const res: any = await chrome.runtime.sendMessage({ type, ...payload });
+    if (!res || !res.ok) throw new Error((res && res.error) || 'Request failed.');
+    return res;
   }, []);
+
+  const refreshSettings = useCallback(() => {
+    rpc('SETTINGS_GET')
+      .then(res =>
+        setSettingsState({ settings: res.settings, catalog: res.catalog, vault: res.vault })
+      )
+      .catch(() => setSettingsState(null));
+  }, [rpc]);
+
+  // Load once the widget is on screen, and again whenever a vault/key action
+  // changes what the tab should be showing.
+  useEffect(() => {
+    if (monitoring) refreshSettings();
+  }, [monitoring, refreshSettings]);
+
+  const afterVaultChange = useCallback(
+    async (fn: () => Promise<unknown>) => {
+      await fn();
+      refreshSettings();
+    },
+    [refreshSettings]
+  );
+
+  const handleSaveSettings = useCallback(
+    async (settings: any) => {
+      await rpc('SETTINGS_SAVE', { settings });
+      setSettingsState(s => (s ? { ...s, settings } : s));
+    },
+    [rpc]
+  );
+
+  const handleCreateVault = useCallback(
+    (passphrase: string) => afterVaultChange(() => rpc('VAULT_CREATE', { passphrase })),
+    [afterVaultChange, rpc]
+  );
+  const handleUnlockVault = useCallback(
+    (passphrase: string) => afterVaultChange(() => rpc('VAULT_UNLOCK', { passphrase })),
+    [afterVaultChange, rpc]
+  );
+  const handleLockVault = useCallback(
+    () => afterVaultChange(() => rpc('VAULT_LOCK')),
+    [afterVaultChange, rpc]
+  );
+  const handleSaveKey = useCallback(
+    (provider: string, apiKey: string) =>
+      afterVaultChange(async () => {
+        // Verify before storing so a typo fails here, not mid-lecture.
+        await rpc('KEY_VERIFY', { provider, apiKey });
+        await rpc('KEY_SET', { provider, apiKey });
+      }),
+    [afterVaultChange, rpc]
+  );
+  const handleRemoveKey = useCallback(
+    (provider: string) => afterVaultChange(() => rpc('KEY_SET', { provider, apiKey: '' })),
+    [afterVaultChange, rpc]
+  );
 
   const handleQuizComplete = useCallback(() => {
     setQuestions(null);
@@ -455,7 +512,14 @@ const ContentApp: React.FC = () => {
       onQuizComplete={handleQuizComplete}
       onWrongAnswer={handleWrongAnswer}
       onStopMonitoring={handleStopMonitoring}
-      onOpenSettings={handleOpenSettings}
+      settingsState={settingsState}
+      onSaveSettings={handleSaveSettings}
+      onCreateVault={handleCreateVault}
+      onUnlockVault={handleUnlockVault}
+      onLockVault={handleLockVault}
+      onSaveKey={handleSaveKey}
+      onRemoveKey={handleRemoveKey}
+      onRefreshSettings={refreshSettings}
       lectureProgress={progress}
       engineStatus={engineStatus}
       notes={uiNotes}

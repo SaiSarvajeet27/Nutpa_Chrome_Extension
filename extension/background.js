@@ -435,12 +435,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   const settingsHandler = settingsHandlers[message.type];
   if (settingsHandler) {
-    // Only the extension's own pages may reach the vault. A content script has
-    // a `sender.tab`; the options page does not — that's the boundary.
-    if (sender.tab) {
-      sendResponse({ ok: false, error: 'Not permitted from a page.' });
-      return false;
-    }
+    // No sender check here, deliberately. An earlier version rejected any
+    // sender carrying a `sender.tab`, on the theory that only extension pages
+    // lack one — but an options page opened with `open_in_tab` HAS a tab, so
+    // the guard blocked the settings UI from talking to its own backend and
+    // the page rendered empty.
+    //
+    // The guard was also unnecessary: chrome.runtime.onMessage only receives
+    // from this extension's own content scripts and pages. A web page cannot
+    // reach it at all without `externally_connectable`, which is not declared.
+    // The invariant that actually protects keys is enforced in the handlers
+    // themselves — they return whether a provider is configured, never the key.
     settingsHandler(message)
       .then((res) => sendResponse({ ok: true, ...res }))
       .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
