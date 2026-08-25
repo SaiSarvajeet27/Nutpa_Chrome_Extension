@@ -5,8 +5,8 @@
 // request, so the default configuration — everything on Gemini — still costs a
 // single call per checkpoint, exactly as before per-feature selection existed.
 //
-// The user's own API keys live in an encrypted vault (vault.js) and are read
-// only here, in the service worker, at the moment of the call.
+// The user's own API keys live in keys.js and are read only here, in the
+// service worker, at the moment of the call — never in a content script.
 
 import { generate, verifyKey } from './providers.js';
 import { buildRequest, normalize } from './checkpoint.js';
@@ -20,21 +20,10 @@ import {
   saveSettings,
   groupFeaturesByModel,
 } from './models.js';
-import {
-  vaultExists,
-  isUnlocked,
-  createVault,
-  unlockVault,
-  lockVault,
-  getSecret,
-  setSecret,
-  listConfiguredProviders,
-  resetVault,
-  changePassphrase,
-} from './vault.js';
+import { getKey, setKey, listConfiguredProviders, clearKeys } from './keys.js';
 
 // config.js is the shipped free-tier Gemini key (machine-local, gitignored).
-// It is a fallback only — a key entered in Settings always wins.
+// It is a fallback only — a key entered in the API keys screen always wins.
 let bundledGeminiKey = '';
 const bundledConfigReady = import('./config.js')
   .then((m) => {
@@ -45,16 +34,16 @@ const bundledConfigReady = import('./config.js')
   })
   .catch(() => {
     // Absent or not an ES module — fine. The user can add a key in Settings.
-    console.info('[nupta] No extension/config.js; using keys from Settings.');
+    console.info('[nupta] No extension/config.js; using keys from the settings screen.');
   });
 
 /**
  * Resolve the API key for a provider.
- * Precedence: the user's own key (encrypted vault) → the bundled free-tier key.
+ * Precedence: the user's own key → the bundled free-tier key.
  * Returns '' when nothing is available, so callers can fall back rather than throw.
  */
 async function resolveKey(provider) {
-  const own = await getSecret(provider);
+  const own = await getKey(provider);
   if (own) return own;
   if (provider === 'gemini') {
     await bundledConfigReady;
@@ -76,7 +65,7 @@ function emptySession() {
     video: { time: null, progress: null, at: 0 },
     // Last hard engine failure (bad key, quota) — surfaced in the widget.
     lastError: '',
-    // A checkpoint that still succeeded but not as configured (a locked vault,
+    // A checkpoint that still succeeded but not as configured (a missing key,
     // one provider down). Distinct from lastError because the success path
     // clears errors — a degradation notice must survive that.
     notice: '',
@@ -325,7 +314,7 @@ async function runGroup(group, transcript, isFinal, decidesReadiness) {
  * Attach an API key to each group, falling back to the free default model when
  * the user's own key isn't available.
  *
- * A locked vault or a removed key shouldn't silently stop the lecture working,
+ * A missing or removed key shouldn't silently stop the lecture working,
  * and Gemini's free tier costs nothing to fall back to — so we degrade to it and
  * say so in the status line rather than failing the checkpoint.
  */
@@ -352,12 +341,7 @@ async function resolveGroups(groups) {
   }
 
   if (degradedFrom.length) {
-    const locked = (await vaultExists()) && !(await isUnlocked());
-    await setDegradedNote(
-      locked
-        ? 'Key vault is locked — using the free model until you unlock it.'
-        : `No API key for: ${degradedFrom.join('; ')}`
-    );
+    await setDegradedNote(`No API key yet for: ${degradedFrom.join('; ')}`);
   }
 
   // Merge any groups that collapsed onto the same fallback model, so the
@@ -383,8 +367,9 @@ function noteDegraded(group, reason) {
 }
 
 /**
- * Options-page RPC. These are the only messages that touch the vault, and they
- * deliberately never return key material — the page can learn THAT a provider
+ * Settings RPC, used by both the in-panel model pickers and the API keys
+ * screen. These are the only messages that touch stored keys, and they
+ * deliberately never return key material — a caller can learn THAT a provider
  * is configured, never what its key is. Editing a key is write-only from the
  * UI's point of view.
  */
@@ -392,41 +377,29 @@ const settingsHandlers = {
   SETTINGS_GET: async () => ({
     settings: await loadSettings(),
     catalog: { features: FEATURES, providers: PROVIDERS, models: MODELS },
-    vault: {
-      exists: await vaultExists(),
-      unlocked: await isUnlocked(),
-      // Names only. No secrets cross this boundary.
-      configured: await listConfiguredProviders(),
-      bundledGemini: !!(await bundledConfigReady.then(() => bundledGeminiKey)),
-    },
+    // Provider NAMES only — never key material. This is the whole boundary:
+    // the UI learns that a provider is configured, never what its key is.
+    configured: await listConfiguredProviders(),
+    bundledGemini: !!(await bundledConfigReady.then(() => bundledGeminiKey)),
   }),
   SETTINGS_SAVE: async (m) => {
     await saveSettings(m.settings);
     return { ok: true };
   },
-  VAULT_CREATE: async (m) => ({ ok: await createVault(m.passphrase) }),
-  VAULT_UNLOCK: async (m) => ({ ok: await unlockVault(m.passphrase) }),
-  VAULT_LOCK: async () => {
-    await lockVault();
-    return { ok: true };
-  },
-  VAULT_RESET: async () => {
-    await resetVault();
-    return { ok: true };
-  },
-  VAULT_CHANGE_PASSPHRASE: async (m) => ({
-    ok: await changePassphrase(m.current, m.next),
-  }),
   KEY_SET: async (m) => {
-    await setSecret(m.provider, m.apiKey);
+    await setKey(m.provider, m.apiKey);
     return { ok: true, configured: await listConfiguredProviders() };
   },
   KEY_VERIFY: async (m) => {
-    // Verify the key the user just typed, before storing it, so a typo is
-    // caught here rather than mid-lecture.
-    const key = m.apiKey || (await getSecret(m.provider));
+    // Check the key the user just typed BEFORE storing it, so a bad paste
+    // fails here rather than silently mid-lecture.
+    const key = m.apiKey || (await getKey(m.provider));
     await verifyKey(m.provider, key);
     return { ok: true };
+  },
+  KEYS_CLEAR: async () => {
+    await clearKeys();
+    return { ok: true, configured: [] };
   },
 };
 

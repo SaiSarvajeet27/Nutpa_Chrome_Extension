@@ -10,6 +10,8 @@ export interface SummaryData {
 interface SummaryTabProps {
   /** Live mode: summary built by the engine, growing at each checkpoint. */
   data?: SummaryData;
+  /** Small model dropdown rendered at the top of this tab. */
+  modelPicker?: React.ReactNode;
 }
 
 const demoData: SummaryData = {
@@ -24,7 +26,7 @@ const demoData: SummaryData = {
   generatedAt: 'Generated at end of lecture',
 };
 
-const SummaryTab: React.FC<SummaryTabProps> = ({ data }) => {
+const SummaryTab: React.FC<SummaryTabProps> = ({ data, modelPicker }) => {
   const live = data !== undefined;
   const summary = data ?? demoData;
   const [copied, setCopied] = useState(false);
@@ -42,7 +44,9 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ data }) => {
   // Live mode before the first checkpoint: explain how the summary works.
   if (live && summary.bullets.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 h-full py-8 text-center">
+      <div className="flex flex-col h-full">
+        {modelPicker}
+        <div className="flex flex-col items-center justify-center gap-4 flex-1 py-8 text-center">
         <div className="w-16 h-16 rounded-2xl bg-[#00d4c8]/10 border border-[#00d4c8]/30 flex items-center justify-center text-3xl">
           📝
         </div>
@@ -52,12 +56,14 @@ const SummaryTab: React.FC<SummaryTabProps> = ({ data }) => {
             Key points are added automatically every time a subtopic completes. Keep watching — this page fills up on its own.
           </p>
         </div>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto scrollbar-thin pr-0.5">
+      {modelPicker}
       {/* Header row */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

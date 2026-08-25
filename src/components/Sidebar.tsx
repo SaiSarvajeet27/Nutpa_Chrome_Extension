@@ -6,13 +6,13 @@ import type { Note } from './tabs/NotesTab';
 import SummaryTab from './tabs/SummaryTab';
 import type { SummaryData } from './tabs/SummaryTab';
 import FlashcardsTab from './tabs/FlashcardsTab';
-import SettingsTab from './tabs/SettingsTab';
-import type { SettingsState } from './tabs/SettingsTab';
+import ModelPicker from './ModelPicker';
+import type { SettingsState } from './ModelPicker';
 import type { Flashcard } from './tabs/FlashcardsTab';
 import GooeyNav from './GooeyNav';
 import logoImg from '../assets/logo.png';
 
-type TabId = 'focus' | 'notes' | 'summary' | 'cards' | 'settings';
+type TabId = 'focus' | 'notes' | 'summary' | 'cards';
 
 /**
  * Manifest version, shown in the header. Reading it here (rather than baking a
@@ -57,15 +57,12 @@ export interface SidebarProps {
   quizPending?: boolean;
   /** Renders a Stop button in the bottom bar (stops monitoring). */
   onStopMonitoring?: () => void;
-  /** Live settings state for the in-panel Settings tab. */
+  /** Model/keys state powering the per-tab dropdowns. */
   settingsState?: SettingsState | null;
-  onSaveSettings?: (s: SettingsState['settings']) => Promise<void>;
-  onCreateVault?: (passphrase: string) => Promise<void>;
-  onUnlockVault?: (passphrase: string) => Promise<void>;
-  onLockVault?: () => Promise<void>;
-  onSaveKey?: (provider: string, apiKey: string) => Promise<void>;
-  onRemoveKey?: (provider: string) => Promise<void>;
-  onRefreshSettings?: () => void;
+  /** Change (or turn off, with null) the model backing one feature. */
+  onChangeModel?: (featureId: string, model: string | null) => void;
+  /** Opens the API keys screen. */
+  onOpenKeys?: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -88,13 +85,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   quizPending,
   onStopMonitoring,
   settingsState,
-  onSaveSettings,
-  onCreateVault,
-  onUnlockVault,
-  onLockVault,
-  onSaveKey,
-  onRemoveKey,
-  onRefreshSettings,
+  onChangeModel,
+  onOpenKeys,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TabId>('focus');
@@ -333,6 +325,18 @@ const Sidebar: React.FC<SidebarProps> = ({
   // Quiz waiting + panel closed → the ball demands attention.
   const alerting = !!quizPending && !isOpen;
 
+  // Each tab gets a dropdown for the one feature it displays. Rendered here so
+  // every tab receives an identical control without each re-implementing it.
+  const picker = (featureId: string) =>
+    settingsState ? (
+      <ModelPicker
+        featureId={featureId}
+        state={settingsState}
+        onChange={onChangeModel}
+        onAddKey={onOpenKeys}
+      />
+    ) : null;
+
   // Position panel relative to the button
   const isLeftHalf = buttonPos.x < window.innerWidth / 2;
   const panelX = isLeftHalf 
@@ -413,7 +417,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         }}
       >
         {/* Header */}
-        <SidebarHeader onOpenSettings={() => setActiveTab('settings')} />
+        <SidebarHeader onOpenSettings={onOpenKeys} />
 
         {/* Tab bar */}
         <div className="flex-shrink-0 px-3 py-2">
@@ -422,12 +426,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               { label: 'Focus', href: '#' },
               { label: 'Notes', href: '#' },
               { label: 'Summary', href: '#' },
-              { label: 'Cards', href: '#' },
-              { label: 'Setup', href: '#' }
+              { label: 'Cards', href: '#' }
             ]}
-            activeIndex={['focus', 'notes', 'summary', 'cards', 'settings'].indexOf(activeTab)}
+            activeIndex={['focus', 'notes', 'summary', 'cards'].indexOf(activeTab)}
             onChange={(index) => {
-              const tabs: TabId[] = ['focus', 'notes', 'summary', 'cards', 'settings'];
+              const tabs: TabId[] = ['focus', 'notes', 'summary', 'cards'];
               setActiveTab(tabs[index]);
             }}
             animationTime={300}
@@ -440,6 +443,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-2 min-h-0">
           <div className="h-full" style={{ display: activeTab === 'focus' ? 'block' : 'none' }}>
             <FocusTab
+              modelPicker={picker('quiz')}
               questions={focusQuestions}
               onComplete={onQuizComplete}
               lectureProgress={lectureProgress ?? 42}
@@ -448,25 +452,13 @@ const Sidebar: React.FC<SidebarProps> = ({
             />
           </div>
           <div className="h-full" style={{ display: activeTab === 'notes' ? 'block' : 'none' }}>
-            <NotesTab notes={notes} onAdd={onAddNote} onDelete={onDeleteNote} onSeek={onSeekNote} />
+            <NotesTab modelPicker={picker('notes')} notes={notes} onAdd={onAddNote} onDelete={onDeleteNote} onSeek={onSeekNote} />
           </div>
           <div className="h-full" style={{ display: activeTab === 'summary' ? 'block' : 'none' }}>
-            <SummaryTab data={summaryData} />
+            <SummaryTab modelPicker={picker('summary')} data={summaryData} />
           </div>
           <div className="h-full" style={{ display: activeTab === 'cards' ? 'block' : 'none' }}>
-            <FlashcardsTab cards={cards} onRate={onRateCard} />
-          </div>
-          <div className="h-full" style={{ display: activeTab === 'settings' ? 'block' : 'none' }}>
-            <SettingsTab
-              state={settingsState}
-              onSaveSettings={onSaveSettings}
-              onCreateVault={onCreateVault}
-              onUnlockVault={onUnlockVault}
-              onLockVault={onLockVault}
-              onSaveKey={onSaveKey}
-              onRemoveKey={onRemoveKey}
-              onRefresh={onRefreshSettings}
-            />
+            <FlashcardsTab modelPicker={picker('flashcards')} cards={cards} onRate={onRateCard} />
           </div>
         </div>
 

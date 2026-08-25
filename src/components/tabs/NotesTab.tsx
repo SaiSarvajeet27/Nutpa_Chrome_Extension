@@ -20,6 +20,8 @@ interface NotesTabProps {
   onDelete?: (id: string) => void;
   /** Jump the lecture video to this note's timestamp. */
   onSeek?: (tSec: number) => void;
+  /** Small model dropdown rendered at the top of this tab. */
+  modelPicker?: React.ReactNode;
 }
 
 const demoNotes: Note[] = [
@@ -28,7 +30,7 @@ const demoNotes: Note[] = [
   { id: '3', timestamp: '19:07', tSec: 1147, text: 'Sampling rate must be ≥ 2× the highest signal frequency (Nyquist)' },
 ];
 
-const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek }) => {
+const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek, modelPicker }) => {
   const live = notes !== undefined;
   const [localNotes, setLocalNotes] = useState<Note[]>(demoNotes);
   const [noteText, setNoteText] = useState('');
@@ -73,6 +75,7 @@ const NotesTab: React.FC<NotesTabProps> = ({ notes, onAdd, onDelete, onSeek }) =
 
   return (
     <div className="flex flex-col gap-3 h-full">
+      {modelPicker}
       {/* Composer */}
       <div className="relative">
         <textarea

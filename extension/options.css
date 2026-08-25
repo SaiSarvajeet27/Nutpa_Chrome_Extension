@@ -139,7 +139,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .provider .row { margin-top: 11px; }
 
 /* ── Features ── */
-.features { display: flex; flex-direction: column; gap: 9px; }
+
 
 .feature {
   display: flex;
@@ -233,3 +233,9 @@ select:disabled { opacity: 0.4; }
 @media (prefers-reduced-motion: reduce) {
   .toggle span, .toggle span::after { transition: none; }
 }
+
+/* Keys screen */
+.note { margin-top: 6px; }
+.note h2 { margin-bottom: 10px; }
+.note button { margin-top: 14px; }
+.provider { padding: 16px 18px; margin-bottom: 12px; }

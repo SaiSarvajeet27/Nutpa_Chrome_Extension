@@ -15,6 +15,8 @@ interface FlashcardsTabProps {
   cards?: Flashcard[];
   /** Reports a rating so the parent reschedules the card (SM-2 lite). */
   onRate?: (id: string, rating: 'easy' | 'hard') => void;
+  /** Small model dropdown rendered at the top of this tab. */
+  modelPicker?: React.ReactNode;
 }
 
 const demoCards: Flashcard[] = [
@@ -46,7 +48,7 @@ const demoCards: Flashcard[] = [
 
 type Confidence = 'easy' | 'hard' | null;
 
-const FlashcardsTab: React.FC<FlashcardsTabProps> = ({ cards, onRate }) => {
+const FlashcardsTab: React.FC<FlashcardsTabProps> = ({ cards, onRate, modelPicker }) => {
   const live = cards !== undefined;
 
   // The review session works on a stable snapshot: in live mode ratings
@@ -96,7 +98,9 @@ const FlashcardsTab: React.FC<FlashcardsTabProps> = ({ cards, onRate }) => {
   // Live mode with no cards yet: explain how the deck grows.
   if (!session || session.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 h-full py-8 text-center">
+      <div className="flex flex-col h-full">
+        {modelPicker}
+        <div className="flex flex-col items-center justify-center gap-4 flex-1 py-8 text-center">
         <div className="w-16 h-16 rounded-2xl bg-[#8b5cf6]/15 border border-[#8b5cf6]/30 flex items-center justify-center text-3xl">
           🃏
         </div>
@@ -105,6 +109,7 @@ const FlashcardsTab: React.FC<FlashcardsTabProps> = ({ cards, onRate }) => {
           <p className="text-[#94a3b8] text-xs mt-2 leading-relaxed max-w-[240px]">
             Every quiz adds study cards automatically — and questions you get wrong come back here for spaced review.
           </p>
+        </div>
         </div>
       </div>
     );
@@ -172,6 +177,7 @@ const FlashcardsTab: React.FC<FlashcardsTabProps> = ({ cards, onRate }) => {
 
   return (
     <div className="flex flex-col gap-4 h-full">
+      {modelPicker}
       {/* Card count badge */}
       <div className="flex items-center justify-between">
         <span className="text-[#94a3b8] text-xs">

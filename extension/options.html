@@ -3,96 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nupta — Settings</title>
+    <title>Nupta — API keys</title>
     <link rel="stylesheet" href="options.css" />
   </head>
   <body>
     <header class="head">
       <div>
-        <h1>Nupta Settings</h1>
-        <p class="sub">Learning Intelligence</p>
+        <h1>API keys</h1>
+        <p class="sub">Nupta — Learning Intelligence</p>
       </div>
-      <div id="vaultBadge" class="badge" hidden></div>
     </header>
 
-    <main id="main" class="wrap">
-      <!-- ── Key vault ─────────────────────────────────────────────────── -->
-      <section class="card">
-        <h2>API keys</h2>
-        <p class="lede">
-          Nupta has no server. Your keys are encrypted on this device with a passphrase only you
-          know, and are sent to nobody but the AI provider you chose.
-          <a href="#privacy">What this does and doesn't protect.</a>
-        </p>
+    <main class="wrap">
+      <p class="lede">
+        Gemini is free and already set up — you only need a key here to use Claude or GPT models.
+        Add one and those options become selectable in every tab's model dropdown.
+      </p>
 
-        <!-- No vault yet -->
-        <div id="vaultSetup" hidden>
-          <p class="hint">
-            Set a passphrase to start storing your own API keys. There is no recovery —
-            if you forget it, the stored keys are gone and you paste them again.
-          </p>
-          <div class="row">
-            <input type="password" id="newPass" placeholder="New passphrase (min 8 characters)" autocomplete="new-password" />
-            <input type="password" id="newPass2" placeholder="Confirm passphrase" autocomplete="new-password" />
-            <button id="createVault" class="primary">Create vault</button>
-          </div>
-        </div>
+      <div id="providers" class="providers"></div>
 
-        <!-- Vault exists, locked -->
-        <div id="vaultLocked" hidden>
-          <p class="hint">Your keys are locked. Unlock once per browser session to use them.</p>
-          <div class="row">
-            <input type="password" id="unlockPass" placeholder="Passphrase" autocomplete="current-password" />
-            <button id="unlockVault" class="primary">Unlock</button>
-            <button id="resetVault" class="danger ghost">Forgot passphrase…</button>
-          </div>
-        </div>
-
-        <!-- Vault unlocked -->
-        <div id="vaultOpen" hidden>
-          <div id="providers" class="providers"></div>
-          <div class="row end">
-            <button id="changePass" class="ghost">Change passphrase</button>
-            <button id="lockVault" class="ghost">Lock now</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- ── Per-feature model choice ──────────────────────────────────── -->
-      <section class="card">
-        <h2>Model for each feature</h2>
-        <p class="lede">
-          Pick a model per feature. Features sharing a model are answered in a single request —
-          keeping everything on Gemini is one free call per checkpoint.
-        </p>
-        <div id="features" class="features"></div>
-        <div id="callNote" class="callnote"></div>
-      </section>
-
-      <!-- ── Privacy explainer ─────────────────────────────────────────── -->
-      <section class="card" id="privacy">
+      <section class="card note">
         <h2>Where your keys go</h2>
         <ul class="facts">
-          <li><b>Nowhere near a backend</b> — there isn't one. Nupta is entirely on-device.</li>
+          <li><b>No server.</b> Nupta is entirely on-device — a key goes only to its own provider.</li>
           <li>
-            <b>Encrypted at rest</b> with AES-GCM; the encryption key is derived from your
-            passphrase (PBKDF2-SHA256, 600,000 iterations). On disk there is only ciphertext.
+            <b>Never in a web page.</b> Keys are read only inside the extension's background worker,
+            never by the widget on your lecture page, so no site you visit can reach them.
           </li>
           <li>
-            <b>Never in a web page.</b> Keys are decrypted only inside the extension's service
-            worker — never in the widget injected into the lecture page.
-          </li>
-          <li>
-            <b>One destination.</b> A key is sent only to its own provider's HTTPS endpoint, to
-            answer your lecture.
-          </li>
-          <li>
-            <b>The honest limit:</b> while the vault is unlocked, the decryption key is held in
-            browser session memory. Someone with access to your unlocked Chrome profile could
-            extract it. Lock the vault, or quit Chrome, to clear it. No in-browser code can defend
-            against malware already running as you.
+            <b>Stored on this device</b> in extension storage, which other extensions can't read.
+            It is <b>not encrypted on disk</b> — anyone with access to your computer could read it,
+            the same as a saved browser password. If a key is ever exposed, revoke it at the
+            provider using the link above.
           </li>
         </ul>
+        <button id="clearAll" class="ghost danger">Remove all stored keys</button>
       </section>
     </main>
 

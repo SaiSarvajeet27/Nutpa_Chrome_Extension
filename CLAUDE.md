@@ -61,8 +61,8 @@ extension/                     the loadable extension (Load unpacked → here)
   models.js                    catalog of providers/models + per-feature settings + call grouping
   providers.js                 one adapter per vendor (Gemini / Anthropic / OpenAI) behind generate()
   checkpoint.js                canonical prompt + JSON Schema per feature; response normalization
-  vault.js                     AES-GCM encrypted store for the user's own API keys
-  options.html/.css/.js        Settings page (model picker + key vault)
+  keys.js                      plain per-provider API key storage (chrome.storage.local)
+  options.html/.css/.js        API keys screen
   *.test.js                    vitest suites for the engine and the vault
   offscreen.js / offscreen.html  local Whisper transcription (offscreen document)
   pcm-worklet.js               AudioWorklet that forwards PCM to the offscreen page
@@ -79,6 +79,7 @@ src/
     storage.test.ts            vitest: videoKey, SM-2 scheduling, due labels, write serialization
   components/
     Sidebar.tsx                the floating ball + resizable/draggable panel + tab bar (GooeyNav)
+    ModelPicker.tsx            the small per-tab model dropdown (one feature each)
     tabs/FocusTab.tsx          live MCQ quiz UI (also has demo-mode fallback)
     tabs/NotesTab.tsx          timestamped, seekable, persisted notes
     tabs/SummaryTab.tsx        live-building summary + concept chips
@@ -130,19 +131,18 @@ One canonical JSON Schema serves all three vendors, written to the strictest com
 (every property in `required`, `additionalProperties: false`, recursively) because that is what
 OpenAI's strict mode demands. `providers.js` translates it — Gemini needs uppercase type names.
 
-## Key vault
+## API keys
 
-The user's own keys live in `vault.js`: AES-GCM, key derived by PBKDF2-SHA256 (600k iterations)
-from a passphrase. The encrypted blob is in `chrome.storage.local`; the derived key sits in
-`chrome.storage.session` while unlocked — **not** a module variable, because MV3 tears the worker
-down after ~30s idle and that would force a re-unlock every few minutes.
+`keys.js` stores one key per provider in `chrome.storage.local`. Deliberately
+plain — no passphrase, no unlock step. Read the header comment there for exactly
+what that protects and what it does not, and don't let the UI overclaim it.
 
-- Decryption happens **only in the service worker**. A key must never reach a content script.
-- The options page can write a key and ask *whether* one exists — the background never sends key
-  material back. Keep it that way.
-- `settingsHandlers` refuses any message where `sender.tab` is set: extension pages only.
-- Read the threat-model comment at the top of `vault.js` before changing anything there, and don't
-  let the docs overclaim — an unlocked vault is readable by anyone at the unlocked browser.
+- Keys are read **only in the service worker**. A key must never be sent to a
+  content script.
+- `SETTINGS_GET` returns `configured` — provider names only. Key material never
+  crosses to any UI, which is why every key field is a blank write-only input.
+- Keys are verified against the provider before being stored, so a bad paste
+  fails at entry rather than mid-lecture.
 
 ## Invariants worth keeping (each one is a bug that was fixed)
 

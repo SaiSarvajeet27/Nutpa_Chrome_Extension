@@ -26,6 +26,8 @@ interface FocusTabProps {
   engineStatus?: string;
   /** Live mode: called when the student answers wrong → auto-creates a flashcard. */
   onWrongAnswer?: (q: FocusQuestion) => void;
+  /** Small model dropdown rendered at the top of this tab. */
+  modelPicker?: React.ReactNode;
 }
 
 const defaultQuestions: FocusQuestion[] = [
@@ -78,6 +80,7 @@ const FocusTab: React.FC<FocusTabProps> = ({
   onComplete,
   engineStatus,
   onWrongAnswer,
+  modelPicker,
 }) => {
   const liveMode = questions !== undefined;
   const activeQuestions = questions === undefined ? defaultQuestions : questions;
@@ -101,6 +104,7 @@ const FocusTab: React.FC<FocusTabProps> = ({
   if (liveMode && (activeQuestions === null || activeQuestions.length === 0)) {
     return (
       <div className="flex flex-col gap-4 h-full">
+        {modelPicker}
         <div className="flex flex-col items-center justify-center flex-1 gap-4 py-8 text-center">
           <div className="w-16 h-16 rounded-full bg-[#00d4c8]/10 border border-[#00d4c8]/30 flex items-center justify-center text-3xl">
             👁️
@@ -182,6 +186,7 @@ const FocusTab: React.FC<FocusTabProps> = ({
   if (completed) {
     return (
       <div className="flex flex-col gap-4 h-full">
+        {modelPicker}
         <div className="flex flex-col items-center justify-center flex-1 gap-4 py-8">
           <div className="w-16 h-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-3xl">
             🎯
@@ -218,6 +223,7 @@ const FocusTab: React.FC<FocusTabProps> = ({
   // ── Active question ──
   return (
     <div className="flex flex-col gap-3 h-full">
+      {modelPicker}
       {/* Pause banner */}
       <div className="flex items-center gap-2 px-3 py-2.5 bg-[#00d4c8]/10 border border-[#00d4c8]/25 rounded-xl">
         <span className="text-[#00d4c8] text-sm">⏸</span>
