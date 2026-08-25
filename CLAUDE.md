@@ -17,10 +17,13 @@ auto-building notes, a summary, and spaced-repetition flashcards.
    This rebuilds `extension/content.js` via `vite.config.ext.ts`. After building, reload the
    extension in `chrome://extensions` (click ↻) and reload the lecture tab.
 
-2. **`extension/config.js` is an optional default Gemini key and is gitignored.** Never commit it,
-   never print the key. It is a fallback only — a key entered on the API keys screen always wins, and it must
-   be an **ES module** (`export const LCQ_CONFIG = …`) because the service worker imports it.
-   Everything still runs without it; the user just adds keys on the API keys screen instead.
+2. **`extension/config.js` is the default Gemini key and is gitignored.** Never commit it, never
+   print the key. It is what makes Gemini work out of the box; a Gemini key entered on the API keys
+   screen overrides it. The worker **fetches it as text and parses it** (`parseBundledKey`) — it is
+   never imported and never executed, so `const` or `export const` both work.
+   **Do not switch this to `import()`**: service workers forbid dynamic import, so the call always
+   rejects, and a static import would break the worker whenever this gitignored file is absent. That
+   bug greyed out every model in every dropdown with "needs API key".
 
 3. **The other `extension/` files ARE the shipped extension and are edited directly** (they're
    plain JS/HTML, not built): `background.js`, `models.js`, `providers.js`, `checkpoint.js`,

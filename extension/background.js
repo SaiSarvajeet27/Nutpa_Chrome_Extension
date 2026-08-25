@@ -19,23 +19,36 @@ import {
   loadSettings,
   saveSettings,
   groupFeaturesByModel,
+  parseBundledKey,
 } from './models.js';
 import { getKey, setKey, listConfiguredProviders, clearKeys } from './keys.js';
 
 // config.js is the shipped free-tier Gemini key (machine-local, gitignored).
-// It is a fallback only — a key entered in the API keys screen always wins.
+// It is what makes Gemini work out of the box with nothing for the user to do;
+// a key entered on the API keys screen overrides it.
+//
+// Read with fetch, NOT import(). Service workers forbid dynamic import() so
+// their module graph stays statically analysable, and a static import would
+// break the whole worker whenever config.js is absent (it is gitignored, so a
+// fresh clone has none). An earlier version used import() here: it rejected on
+// every start, the catch swallowed it, and Gemini silently looked unconfigured
+// — every model in every dropdown greyed out with "needs API key".
+//
+// The text is parsed, never evaluated: running code out of a config file inside
+// the worker would be a needless risk for one string.
 let bundledGeminiKey = '';
-const bundledConfigReady = import('./config.js')
-  .then((m) => {
-    const cfg = m.LCQ_CONFIG || m.default || {};
-    if (cfg.GEMINI_API_KEY && cfg.GEMINI_API_KEY !== 'PASTE_YOUR_KEY_HERE') {
-      bundledGeminiKey = cfg.GEMINI_API_KEY;
-    }
-  })
-  .catch(() => {
-    // Absent or not an ES module — fine. The user can add a key in Settings.
-    console.info('[nupta] No extension/config.js; using keys from the settings screen.');
-  });
+const bundledConfigReady = (async () => {
+  try {
+    const res = await fetch(chrome.runtime.getURL('config.js'));
+    if (!res.ok) return;
+    bundledGeminiKey = parseBundledKey(await res.text());
+  } catch {
+    // No config.js — fine, the user can add their own Gemini key in the UI.
+  }
+  if (!bundledGeminiKey) {
+    console.info('[nupta] No bundled Gemini key; add one on the API keys screen.');
+  }
+})();
 
 /**
  * Resolve the API key for a provider.

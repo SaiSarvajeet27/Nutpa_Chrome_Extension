@@ -1,15 +1,13 @@
-// Optional. Copy this file to config.js to bake in a default Gemini key so the
-// extension works out of the box without anyone opening Settings.
+// Optional. Copy this file to config.js and paste a Gemini key so the extension
+// works out of the box, with nothing for the user to set up.
 //
-// This is a FALLBACK only — a Gemini key entered in Nupta's Settings page always
-// wins, and keys for Claude/OpenAI live exclusively in the encrypted vault and
-// are never read from this file.
+// This is the free-tier default. A Gemini key entered on Nupta's API keys screen
+// overrides it, and keys for Claude/OpenAI are never read from this file.
 //
 // Get a free key at https://aistudio.google.com/apikey
 //
-// NOTE: this must be an ES module (`export const`) — the service worker imports
-// it. A pre-0.2 config.js that says only `const LCQ_CONFIG = ...` needs `export`
-// added in front.
-export const LCQ_CONFIG = {
+// The service worker reads this file as text and pulls out GEMINI_API_KEY — it
+// is never executed, so either `const` or `export const` works.
+const LCQ_CONFIG = {
   GEMINI_API_KEY: 'PASTE_YOUR_KEY_HERE',
 };

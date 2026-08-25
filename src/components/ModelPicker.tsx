@@ -77,7 +77,7 @@ const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, o
           onChange?.(featureId, v === OFF ? null : v);
         }}
         className="flex-1 min-w-0 bg-[#0a0f1e] border border-[#1e293b] hover:border-[#00d4c8]/40
-                   focus:border-[#00d4c8]/60 rounded-lg pl-2 pr-1 py-1 text-[10px] text-[#cbd5e1]
+                   focus:border-[#00d4c8]/60 rounded-lg pl-2 pr-1 py-1.5 text-[11px] text-[#cbd5e1]
                    outline-none cursor-pointer transition-colors"
       >
         <option value={OFF}>⏻ Off</option>
@@ -88,9 +88,17 @@ const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, o
               {models
                 .filter(m => m.provider === p.id)
                 .map(m => (
-                  <option key={m.id} value={m.id} disabled={!usable}>
+                  <option
+                    key={m.id}
+                    value={m.id}
+                    // Never disable the option that is currently selected: a
+                    // <select> cannot display a disabled option, so it would
+                    // fall back to showing the first enabled one and the
+                    // control would lie about what is configured.
+                    disabled={!usable && m.id !== conf.model}
+                  >
                     {m.label}
-                    {p.free ? ' (free)' : ''}
+                    {p.free ? ' (free)' : usable ? '' : ' — add key'}
                   </option>
                 ))}
             </optgroup>

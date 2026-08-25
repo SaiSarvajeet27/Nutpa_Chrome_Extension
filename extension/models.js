@@ -153,3 +153,20 @@ export function groupFeaturesByModel(settings) {
   }
   return [...groups.values()];
 }
+
+/**
+ * Pull the bundled Gemini key out of config.js's text.
+ *
+ * Parsed rather than executed: the service worker fetches that file as text, so
+ * nothing in it ever runs. (It cannot be imported either — service workers
+ * forbid dynamic import(), and a static import would break the worker whenever
+ * the gitignored config.js is absent.)
+ *
+ * Accepts `const` or `export const`, single/double/backtick quotes, and ignores
+ * the untouched placeholder.
+ */
+export function parseBundledKey(text) {
+  const m = String(text || '').match(/GEMINI_API_KEY\s*:\s*['"`]([^'"`]+)['"`]/);
+  const key = m && m[1];
+  return key && key !== 'PASTE_YOUR_KEY_HERE' ? key : '';
+}

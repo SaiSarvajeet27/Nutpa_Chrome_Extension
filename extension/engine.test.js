@@ -12,8 +12,9 @@ vi.stubGlobal('chrome', {
   },
 });
 
-const { groupFeaturesByModel, defaultSettings, loadSettings, FEATURES, MODELS, getModel } =
-  await import('./models.js');
+const {
+  groupFeaturesByModel, defaultSettings, loadSettings, FEATURES, MODELS, getModel, parseBundledKey,
+} = await import('./models.js');
 const { buildRequest, normalize } = await import('./checkpoint.js');
 
 beforeEach(() => {
@@ -233,5 +234,48 @@ describe('normalize', () => {
       flashcards: [],
       notes: [],
     });
+  });
+});
+
+describe('parseBundledKey', () => {
+  // This is what makes Gemini work out of the box. When it returned '' the
+  // whole picker greyed out and claimed Gemini "needs API key", so each
+  // supported spelling of config.js is pinned here.
+  const KEY = 'AIzaEXAMPLEKEY0123456789abcdef';
+
+  it('reads a plain const config', () => {
+    expect(parseBundledKey(`const LCQ_CONFIG = {
+  GEMINI_API_KEY: '${KEY}',
+};`)).toBe(KEY);
+  });
+
+  it('reads an ES-module config', () => {
+    expect(parseBundledKey(`export const LCQ_CONFIG = {
+  GEMINI_API_KEY: '${KEY}',
+};`)).toBe(KEY);
+  });
+
+  it('accepts double and backtick quotes', () => {
+    expect(parseBundledKey(`const C = { GEMINI_API_KEY: "${KEY}" };`)).toBe(KEY);
+    expect(parseBundledKey('const C = { GEMINI_API_KEY: `' + KEY + '` };')).toBe(KEY);
+  });
+
+  it('ignores other fields in the file', () => {
+    expect(
+      parseBundledKey(`export const C = {
+ GEMINI_API_KEY: '${KEY}',
+ GEMINI_MODEL: 'gemini-2.5-flash',
+};`)
+    ).toBe(KEY);
+  });
+
+  it('treats the untouched placeholder as no key', () => {
+    expect(parseBundledKey("const C = { GEMINI_API_KEY: 'PASTE_YOUR_KEY_HERE' };")).toBe('');
+  });
+
+  it('returns empty for a missing or unreadable file', () => {
+    expect(parseBundledKey('')).toBe('');
+    expect(parseBundledKey(undefined)).toBe('');
+    expect(parseBundledKey('// nothing useful here')).toBe('');
   });
 });
