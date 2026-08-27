@@ -64,7 +64,24 @@ function httpError(providerLabel, status, body) {
   if (status >= 500) {
     return new Error(`${providerLabel} is unavailable right now — retrying next checkpoint.`);
   }
-  return new Error(`${providerLabel} error ${status}: ${text.slice(0, 200)}`);
+  // Unexpected status: the raw body is the only useful diagnostic, but it is
+  // provider-controlled text that ends up in session.lastError and on screen.
+  // Some providers echo the submitted key back in an error ("Incorrect API key
+  // provided: sk-…"), so scrub anything key-shaped before it can be displayed,
+  // logged, or screenshotted.
+  return new Error(`${providerLabel} error ${status}: ${redactKeys(text).slice(0, 200)}`);
+}
+
+/**
+ * Replace anything shaped like a provider API key with a placeholder.
+ * Deliberately broad — a false positive costs a less precise error message,
+ * a false negative puts a live credential on screen.
+ */
+export function redactKeys(text) {
+  return String(text || '')
+    .replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, 'sk-ant-[REDACTED]')
+    .replace(/sk-(?:proj-)?[A-Za-z0-9_-]{8,}/g, 'sk-[REDACTED]')
+    .replace(/AIza[A-Za-z0-9_-]{8,}/g, 'AIza[REDACTED]');
 }
 
 async function readError(resp) {

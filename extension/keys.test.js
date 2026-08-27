@@ -88,3 +88,34 @@ describe('clearKeys', () => {
     expect(JSON.stringify(local)).not.toContain(ANTHROPIC);
   });
 });
+
+// Provider error bodies are shown in the widget and land in session.lastError.
+// Some providers echo the submitted key back, so nothing key-shaped may survive.
+const { redactKeys } = await import('./providers.js');
+
+describe('redactKeys', () => {
+
+  it('scrubs an Anthropic key', () => {
+    const out = redactKeys('Incorrect API key provided: sk-ant-api03-AAAAAAAAAAAAAAAAAAAA');
+    expect(out).not.toContain('sk-ant-api03-AAAA');
+    expect(out).toContain('[REDACTED]');
+  });
+
+  it('scrubs OpenAI keys including project-scoped ones', () => {
+    expect(redactKeys('bad key sk-proj-BBBBBBBBBBBBBBBBBBBB')).not.toContain('BBBBBBBB');
+    expect(redactKeys('bad key sk-CCCCCCCCCCCCCCCCCCCC')).not.toContain('CCCCCCCC');
+  });
+
+  it('scrubs a Gemini key', () => {
+    expect(redactKeys('API key not valid: AIzaDDDDDDDDDDDDDDDDDDDD')).not.toContain('AIzaDDDD');
+  });
+
+  it('leaves ordinary error text readable', () => {
+    expect(redactKeys('model not found: gemini-2.5-flash')).toBe('model not found: gemini-2.5-flash');
+  });
+
+  it('handles empty and non-string input', () => {
+    expect(redactKeys('')).toBe('');
+    expect(redactKeys(undefined)).toBe('');
+  });
+});

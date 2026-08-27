@@ -69,7 +69,16 @@ function mountWidget() {
     host.addEventListener(evt, e => e.stopPropagation());
   }
 
-  const shadow = host.attachShadow({ mode: 'open' });
+  // CLOSED, not open. The panel contains the API key input, and with an open
+  // root any script on the host page could read the key straight out of it:
+  //   document.getElementById('nupta-host').shadowRoot
+  //     .querySelector('input[type=password]').value
+  // A closed root makes `host.shadowRoot` null for page scripts, so that path
+  // is gone. Not an absolute boundary — a page that patches
+  // Element.prototype.attachShadow before this content script runs can still
+  // capture the root — but it closes the trivial case, and combined with the
+  // key-event trapping above a page has no easy way to observe key entry.
+  const shadow = host.attachShadow({ mode: 'closed' });
 
   const style = document.createElement('style');
   // Strip remote font @import — host-page CSP (e.g. YouTube) blocks it and

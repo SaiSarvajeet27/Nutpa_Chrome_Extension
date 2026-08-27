@@ -6,9 +6,9 @@
 // WHAT THIS DOES PROTECT
 //   • No backend. There is no server to hold a key even in principle; a key
 //     travels exactly one route — this machine to that provider's HTTPS endpoint.
-//   • Never in a web page. Keys are read only inside the service worker. They
-//     are never sent to a content script, so no site you visit can reach them,
-//     and the widget on the lecture page never holds one.
+//   • Never READ into a web page. Keys are read only inside the service worker
+//     and are never sent to a content script, so no site can pull a stored key
+//     out of the extension.
 //   • Isolated from other extensions. chrome.storage.local is per-extension;
 //     another extension cannot read this one's storage.
 //   • Write-only from the UI. The settings page can store a key and ask whether
@@ -21,6 +21,14 @@
 //     keys. This is the same posture as essentially every extension that stores
 //     an API key, and it is the tradeoff for having no passphrase to type.
 //     Treat these keys as you would a saved browser password.
+//   • ENTRY happens inside the page. The keys screen lives in the widget, so a
+//     key being typed passes through the content script. The panel's shadow
+//     root is closed and it swallows key events, so an ordinary page cannot see
+//     it — but a page that patches Element.prototype.attachShadow before the
+//     content script runs can capture the root and read the field. This is
+//     inherent to typing a secret into an in-page UI; extension/options.html
+//     is the hardened alternative, since it is an extension page with no host
+//     page in it at all.
 //
 // If a key is ever exposed, revoke it at the provider; that is the recovery
 // path, and it is why `providerKeyUrl` is surfaced in the UI.
