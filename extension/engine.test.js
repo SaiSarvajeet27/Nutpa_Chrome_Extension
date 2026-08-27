@@ -14,6 +14,8 @@ vi.stubGlobal('chrome', {
 
 const {
   groupFeaturesByModel, defaultSettings, loadSettings, FEATURES, MODELS, getModel, parseBundledKey,
+  DEFAULT_MODEL,
+  modelUsable,
 } = await import('./models.js');
 const { buildRequest, normalize } = await import('./checkpoint.js');
 
@@ -96,12 +98,21 @@ describe('loadSettings', () => {
     const s = await loadSettings();
     expect(s.features.quiz.model).toBe('claude-opus-5'); // keeps the user's choice
     expect(s.features.notes).toBeDefined(); // and gains the new feature
-    expect(s.features.summary.model).toBe('gemini-2.5-flash');
+    expect(s.features.summary.model).toBe(DEFAULT_MODEL);
   });
 
   it('falls back to the default when a stored model no longer exists', async () => {
     store['nupta:settings'] = { v: 1, features: { quiz: { model: 'gone', enabled: true } } };
-    expect((await loadSettings()).features.quiz.model).toBe('gemini-2.5-flash');
+    expect((await loadSettings()).features.quiz.model).toBe(DEFAULT_MODEL);
+  });
+
+  it('migrates a user off a model that was retired upstream', async () => {
+    // gemini-2.5-pro now 404s ("no longer available to new users"). Anyone who
+    // had selected it must land on something that works, not a dead id.
+    store['nupta:settings'] = { v: 1, features: { quiz: { model: 'gemini-2.5-pro', enabled: true } } };
+    const s = await loadSettings();
+    expect(s.features.quiz.model).toBe(DEFAULT_MODEL);
+    expect(getModel(s.features.quiz.model)).toBeTruthy();
   });
 
   it('returns defaults when nothing is stored', async () => {
@@ -277,5 +288,47 @@ describe('parseBundledKey', () => {
     expect(parseBundledKey('')).toBe('');
     expect(parseBundledKey(undefined)).toBe('');
     expect(parseBundledKey('// nothing useful here')).toBe('');
+  });
+});
+
+describe('modelUsable — free tier is per model, not per provider', () => {
+  const bundled = { configured: [], bundledGemini: true };
+  const nothing = { configured: [], bundledGemini: false };
+  const m = (id) => getModel(id);
+
+  it('lets the bundled key run every free-tier Gemini model', () => {
+    // Verified against the live API: these answer on the free tier.
+    for (const id of ['gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash']) {
+      expect(modelUsable(m(id), bundled), id).toBe(true);
+    }
+  });
+
+  it('does NOT offer Gemini Pro on the bundled key', () => {
+    // It returns 429 quota without billing — offering it would fail mid-lecture.
+    expect(modelUsable(m('gemini-3.1-pro-preview'), bundled)).toBe(false);
+  });
+
+  it('unlocks Gemini Pro once the user adds their own Gemini key', () => {
+    expect(modelUsable(m('gemini-3.1-pro-preview'), { configured: ['gemini'], bundledGemini: true })).toBe(true);
+  });
+
+  it('never offers Claude or GPT without a user key', () => {
+    for (const id of ['claude-opus-5', 'gpt-5.2']) {
+      expect(modelUsable(m(id), bundled), id).toBe(false);
+    }
+    expect(modelUsable(m('claude-opus-5'), { configured: ['anthropic'], bundledGemini: true })).toBe(true);
+  });
+
+  it('offers nothing when there is no bundled key and no user key', () => {
+    expect(MODELS.some((x) => modelUsable(x, nothing))).toBe(false);
+  });
+
+  it('defaults to a model that works with no setup at all', () => {
+    expect(modelUsable(getModel(defaultSettings().features.quiz.model), bundled)).toBe(true);
+  });
+
+  it('has no model referencing a retired id', () => {
+    // gemini-2.5-pro now 404s ("no longer available to new users").
+    expect(MODELS.find((x) => x.id === 'gemini-2.5-pro')).toBeUndefined();
   });
 });

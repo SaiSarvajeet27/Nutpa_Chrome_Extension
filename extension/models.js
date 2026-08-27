@@ -49,37 +49,62 @@ export const PROVIDERS = {
  * construct or decorate these (no date suffixes), they are complete as written.
  */
 export const MODELS = [
-  // ── Google Gemini (free tier) ──
+  // ── Google Gemini ──
+  // `freeTier` is the important field: it means "the bundled key can use this",
+  // i.e. the user needs no key of their own. Verified empirically against the
+  // live API — Flash-class models answer on the free tier, Pro-class returns 429
+  // (quota/billing) without a paid plan. Re-check when adding a Gemini model;
+  // do not assume a whole provider is free.
   {
-    id: 'gemini-2.5-flash',
+    id: 'gemini-3.7-flash',
     provider: 'gemini',
-    label: 'Gemini 2.5 Flash',
-    note: 'Free · fast · the default',
+    label: 'Gemini 3.7 Flash',
+    note: 'Free · newest · the default',
+    freeTier: true,
   },
+  { id: 'gemini-3.5-flash', provider: 'gemini', label: 'Gemini 3.5 Flash', note: 'Free · fast', freeTier: true },
   {
-    id: 'gemini-2.5-pro',
+    id: 'gemini-3.5-flash-lite',
     provider: 'gemini',
-    label: 'Gemini 2.5 Pro',
-    note: 'Free tier · slower, stronger reasoning',
+    label: 'Gemini 3.5 Flash Lite',
+    note: 'Free · fastest, lightest',
+    freeTier: true,
+  },
+  { id: 'gemini-2.5-flash', provider: 'gemini', label: 'Gemini 2.5 Flash', note: 'Free · previous generation', freeTier: true },
+  {
+    id: 'gemini-3.1-pro-preview',
+    provider: 'gemini',
+    label: 'Gemini 3.1 Pro',
+    note: 'Strongest reasoning · needs your own Gemini key',
+    freeTier: false, // 429 quota on the free tier — billing required
   },
 
-  // ── Anthropic ──
-  { id: 'claude-opus-5', provider: 'anthropic', label: 'Claude Opus 5', note: 'Most capable' },
-  { id: 'claude-sonnet-5', provider: 'anthropic', label: 'Claude Sonnet 5', note: 'Balanced' },
-  {
-    id: 'claude-haiku-4-5',
-    provider: 'anthropic',
-    label: 'Claude Haiku 4.5',
-    note: 'Fastest · cheapest',
-  },
+  // ── Anthropic ── (always the user's own key)
+  { id: 'claude-opus-5', provider: 'anthropic', label: 'Claude Opus 5', note: 'Most capable', freeTier: false },
+  { id: 'claude-sonnet-5', provider: 'anthropic', label: 'Claude Sonnet 5', note: 'Balanced', freeTier: false },
+  { id: 'claude-haiku-4-5', provider: 'anthropic', label: 'Claude Haiku 4.5', note: 'Fastest · cheapest', freeTier: false },
 
-  // ── OpenAI ──
-  { id: 'gpt-5.2', provider: 'openai', label: 'GPT-5.2', note: 'Most capable' },
-  { id: 'gpt-5-mini', provider: 'openai', label: 'GPT-5 mini', note: 'Faster · cheaper' },
-  { id: 'gpt-4.1', provider: 'openai', label: 'GPT-4.1', note: 'Previous generation' },
+  // ── OpenAI ── (always the user's own key)
+  { id: 'gpt-5.2', provider: 'openai', label: 'GPT-5.2', note: 'Most capable', freeTier: false },
+  { id: 'gpt-5-mini', provider: 'openai', label: 'GPT-5 mini', note: 'Faster · cheaper', freeTier: false },
+  { id: 'gpt-4.1', provider: 'openai', label: 'GPT-4.1', note: 'Previous generation', freeTier: false },
 ];
 
-export const DEFAULT_MODEL = 'gemini-2.5-flash';
+/**
+ * Can this model be used right now?
+ *
+ * Free-tier models work with the bundled key, so the student needs nothing.
+ * Everything else — including Gemini's Pro tier — needs the user's own key for
+ * that provider. Deciding this per MODEL rather than per PROVIDER is the point:
+ * "Gemini is free" is not true of every Gemini model.
+ */
+export function modelUsable(model, { configured = [], bundledGemini = false } = {}) {
+  if (!model) return false;
+  if (configured.includes(model.provider)) return true;
+  return !!(model.freeTier && model.provider === 'gemini' && bundledGemini);
+}
+
+export const DEFAULT_MODEL = 'gemini-3.7-flash';
 
 export function getModel(modelId) {
   return MODELS.find((m) => m.id === modelId) || null;

@@ -4,11 +4,11 @@ import React from 'react';
  * The small model dropdown that sits at the top of each tab, choosing which
  * model powers that one feature.
  *
- * Gemini is free and always selectable. Models from providers with no API key
- * yet are shown but disabled and labelled, rather than hidden — otherwise the
- * options silently don't exist and there's nothing to explain why. An "Add key"
- * link appears next to the picker in exactly that case, so the dead end always
- * comes with its own way out.
+ * Availability is decided per MODEL, not per provider: Gemini's Flash models
+ * run on the bundled free key, while Gemini Pro needs the user's own. Models
+ * that need a key are shown but disabled and labelled "— add key", rather than
+ * hidden, so the options never silently don't exist — and an "Add key" button
+ * sits alongside, so the dead end always comes with its own way out.
  */
 
 export interface FeatureDef { id: string; label: string; blurb: string }
@@ -19,7 +19,14 @@ export interface ProviderDef {
   keyUrl: string;
   keyHint: string;
 }
-export interface ModelDef { id: string; provider: string; label: string; note: string }
+export interface ModelDef {
+  id: string;
+  provider: string;
+  label: string;
+  note: string;
+  /** The bundled free key can use this — the student needs no key of their own. */
+  freeTier?: boolean;
+}
 
 export interface SettingsState {
   settings: { features: Record<string, { model: string; enabled: boolean }> };
@@ -42,14 +49,20 @@ export interface ModelPickerProps {
 
 const OFF = '__off__';
 
-/** True when this provider can actually be used right now. */
-function providerUsable(
-  providerId: string,
-  state: Pick<SettingsState, 'catalog' | 'configured' | 'bundledGemini'>
+/**
+ * Can this MODEL be used right now — not "is this provider free".
+ *
+ * Gemini's Flash models answer on the bundled free key; Gemini Pro does not
+ * (it returns a quota error without billing). Treating the whole provider as
+ * free offered Pro as though it were free and it would have failed mid-lecture.
+ */
+function modelUsable(
+  model: ModelDef | undefined,
+  state: Pick<SettingsState, 'configured' | 'bundledGemini'>
 ): boolean {
-  if (state.configured.includes(providerId)) return true;
-  const p = state.catalog.providers[providerId];
-  return !!(p && p.free && state.bundledGemini);
+  if (!model) return false;
+  if (state.configured.includes(model.provider)) return true;
+  return !!(model.freeTier && model.provider === 'gemini' && state.bundledGemini);
 }
 
 const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, onAddKey }) => {
@@ -62,9 +75,8 @@ const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, o
   const current = conf.enabled ? conf.model : OFF;
   const currentModel = models.find(m => m.id === conf.model);
   // Prompt for a key only when the selection actually needs one.
-  const needsKey =
-    conf.enabled && currentModel && !providerUsable(currentModel.provider, state);
-  const anyLocked = Object.keys(providers).some(id => !providerUsable(id, state));
+  const needsKey = conf.enabled && !!currentModel && !modelUsable(currentModel, state);
+  const anyLocked = models.some(m => !modelUsable(m, state));
 
   return (
     <div className="flex items-center gap-1.5 pb-2">
@@ -82,12 +94,16 @@ const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, o
       >
         <option value={OFF}>⏻ Off</option>
         {Object.values(providers).map(p => {
-          const usable = providerUsable(p.id, state);
+          const mine = models.filter(m => m.provider === p.id);
+          if (!mine.length) return null;
+          // Label the GROUP by whether anything in it is usable — a provider
+          // can be part-free (Gemini) rather than all-or-nothing.
+          const anyUsable = mine.some(m => modelUsable(m, state));
           return (
-            <optgroup key={p.id} label={usable ? p.label : `${p.label} — needs API key`}>
-              {models
-                .filter(m => m.provider === p.id)
-                .map(m => (
+            <optgroup key={p.id} label={anyUsable ? p.label : `${p.label} — needs API key`}>
+              {mine.map(m => {
+                const usable = modelUsable(m, state);
+                return (
                   <option
                     key={m.id}
                     value={m.id}
@@ -98,9 +114,10 @@ const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, o
                     disabled={!usable && m.id !== conf.model}
                   >
                     {m.label}
-                    {p.free ? ' (free)' : usable ? '' : ' — add key'}
+                    {usable ? (m.freeTier ? ' (free)' : '') : ' — add key'}
                   </option>
-                ))}
+                );
+              })}
             </optgroup>
           );
         })}

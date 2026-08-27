@@ -51,6 +51,10 @@ video ─content script (all frames)→ every 2 min → background service worke
   Runtime + wasm live in `extension/libs/` (committed; large but under GitHub's 100 MB/file limit).
 - **One Gemini call per checkpoint** returns quiz + summary + concepts + flashcards together
   (structured `responseSchema`). This keeps everything inside the free tier (~30 calls/hr).
+- **Free tier is per MODEL, not per provider** (`modelUsable()` in models.js). Gemini *Flash*
+  models answer on the bundled key; Gemini *Pro* returns 429 without billing, so it needs the
+  user's own key like Claude and GPT. Verify against the live API before marking a new model
+  `freeTier: true` — do not infer it from the provider.
 - **Subtopic detection is an AI judgment, not a timer** — Gemini decides if a subtopic *concluded*.
 
 ---
