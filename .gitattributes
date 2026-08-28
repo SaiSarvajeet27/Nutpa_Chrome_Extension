@@ -18,3 +18,6 @@ extension/libs/**  binary linguist-vendored
 
 # Generated bundle: collapsed in diffs and excluded from language stats.
 extension/content.js linguist-generated
+
+# Never let the checked-in bundle be built from CRLF sources (see scripts/check-eol.mjs)
+*.mjs  text eol=lf

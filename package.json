@@ -10,8 +10,10 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "tsc -b && oxlint && vitest run",
-    "preview": "vite preview"
+    "check": "node scripts/check-eol.mjs && tsc -b && oxlint && vitest run",
+    "preview": "vite preview",
+    "check:eol": "node scripts/check-eol.mjs",
+    "fix:eol": "node scripts/check-eol.mjs --fix"
   },
   "dependencies": {
     "gsap": "^3.15.0",
