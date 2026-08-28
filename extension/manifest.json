@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nupta — Learning Intelligence",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Follows your lecture with a Whisper transcript (on-device or Groq) and checks your attentiveness with AI quizzes when subtopics complete",
   "permissions": [
     "storage",

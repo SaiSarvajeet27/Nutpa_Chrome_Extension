@@ -403,9 +403,24 @@ async function setDegradedNote(note) {
   saveSession();
 }
 
+/**
+ * A provider that self-heals — down, rate-limited, momentarily overloaded. The
+ * engine already retries at the next checkpoint, so there is nothing for the
+ * student to do and putting it in the panel is pure noise. Anything else (a key
+ * rejected, a malformed response) needs a decision from them and is surfaced.
+ */
+const SELF_HEALING = /unavailable|rate limit|retry|retrying|too large|timeout|temporarily/i;
+
 function noteDegraded(group, reason) {
   const detail = String(reason?.message || reason || '').slice(0, 160);
-  setDegradedNote(`${group.features.join(' + ')}: ${detail}`);
+  const features = group.features.join(' + ');
+  if (SELF_HEALING.test(detail)) {
+    // Kept out of the UI on purpose; still logged so a persistent problem is
+    // diagnosable from the service-worker console.
+    console.warn(`[nupta] ${features}: ${detail} (will retry)`);
+    return;
+  }
+  setDegradedNote(`${features}: ${detail}`);
 }
 
 /**

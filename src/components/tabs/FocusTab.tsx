@@ -109,13 +109,18 @@ const FocusTab: React.FC<FocusTabProps> = ({
           <div className="w-16 h-16 rounded-full bg-[#00d4c8]/10 border border-[#00d4c8]/30 flex items-center justify-center text-3xl">
             👁️
           </div>
-          <div>
+          {/* One width for the whole block. The cap used to sit on the
+              paragraph alone, so a long status line stretched this container
+              wider and left the copy ragged and narrow inside it. */}
+          <div className="max-w-[260px] mx-auto">
             <p className="text-white font-semibold text-base">Watching the lecture with you</p>
-            <p className="text-[#94a3b8] text-xs mt-2 leading-relaxed max-w-[240px]">
+            <p className="text-[#94a3b8] text-xs mt-2 leading-relaxed text-balance">
               Questions appear here automatically when a subtopic wraps up — keep watching.
             </p>
             {engineStatus && (
-              <p className="text-[#00d4c8] text-[11px] mt-3 font-medium">{engineStatus}</p>
+              <p className="text-[#00d4c8] text-[11px] mt-3 font-medium leading-relaxed text-balance">
+                {engineStatus}
+              </p>
             )}
           </div>
         </div>
