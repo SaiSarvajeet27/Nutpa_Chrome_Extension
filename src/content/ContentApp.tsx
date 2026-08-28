@@ -315,7 +315,8 @@ const ContentApp: React.FC = () => {
             settings: res.settings,
             catalog: res.catalog,
             configured: res.configured || [],
-            bundledGemini: !!res.bundledGemini,
+            bundled: res.bundled || {},
+            transcribers: res.transcribers || [],
           });
         })
         .catch(() => setSettingsState(null));
@@ -335,6 +336,18 @@ const ContentApp: React.FC = () => {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [monitoring, refreshSettings]);
+
+  // One transcription engine for the whole session — not per feature.
+  const handleChangeTranscriber = useCallback((id: string) => {
+    setSettingsState(prev => {
+      if (!prev) return prev;
+      const settings = { ...prev.settings, transcription: { model: id } };
+      try {
+        chrome.runtime.sendMessage({ type: 'SETTINGS_SAVE', settings }).catch(() => {});
+      } catch { /* extension reloaded */ }
+      return { ...prev, settings };
+    });
+  }, []);
 
   const handleChangeModel = useCallback(
     (featureId: string, model: string | null) => {
@@ -533,6 +546,7 @@ const ContentApp: React.FC = () => {
       onChangeModel={handleChangeModel}
       onSaveKey={handleSaveKey}
       onRemoveKey={handleRemoveKey}
+      onChangeTranscriber={handleChangeTranscriber}
       lectureProgress={progress}
       engineStatus={engineStatus}
       notes={uiNotes}

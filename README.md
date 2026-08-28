@@ -5,9 +5,9 @@ into active recall. It follows the lecture through a **live, on-device transcrip
 instructor finishes a subtopic, pauses the video and asks a quick comprehension question — then
 automatically builds the student's **notes, summary, and spaced-repetition flashcards** along the way.
 
-Works on **any site with a video player**. Speech-to-text runs **entirely in the browser**
-(Whisper on WebGPU), so lecture audio never leaves the machine and there is **no per-user
-transcription cost**.
+Works on **any site with a video player**. Speech-to-text runs **on-device by default**
+(Whisper on WebGPU), so lecture audio never leaves the machine — or you can switch to Groq's
+hosted Whisper for more speed and accuracy, which uploads audio. Either way it's free.
 
 ---
 
@@ -16,6 +16,7 @@ transcription cost**.
 - [Features](#features)
 - [Quick start](#quick-start)
 - [Choosing a model per feature](#choosing-a-model-per-feature)
+- [Transcription engine](#transcription-engine)
 - [API keys and how they are protected](#api-keys-and-how-they-are-protected)
 - [Architecture](#architecture)
 - [Repository layout](#repository-layout)
@@ -97,12 +98,16 @@ model:
 | Model | Needs your own key? |
 |---|---|
 | **Gemini 3.7 Flash** *(default)* | No — free |
-| **Gemini 3.5 Flash** | No — free |
-| **Gemini 3.5 Flash Lite** | No — free |
-| **Gemini 2.5 Flash** | No — free |
+| **Gemini 3.5 Flash** · **3.5 Flash Lite** · **2.5 Flash** | No — free |
+| **GPT-OSS 120B / 20B (Groq)** | No — free |
+| **Qwen 3.8 27B (Groq)** | No — free |
 | Gemini 3.1 Pro | **Yes** — Gemini key with billing |
 | Claude Opus 5 / Sonnet 5 / Haiku 4.5 | **Yes** — Anthropic key |
 | GPT-5.2 / GPT-5 mini / GPT-4.1 | **Yes** — OpenAI key |
+
+Groq is the fastest free option — a full checkpoint comes back in about two seconds. Only Groq
+models verified to honour a *strict* JSON schema are listed, since the engine depends entirely on
+structured output.
 
 Models you can't use yet are shown but greyed out and labelled `— add key`, with an **＋ Key** button
 beside the dropdown — so an unavailable option never silently disappears without explaining itself.
@@ -116,6 +121,24 @@ you.
 
 If a key is missing, that feature quietly falls back to the free Gemini model and says so in the
 panel's status line rather than interrupting the lecture.
+
+---
+
+## Transcription engine
+
+Separate from the four AI features — one engine transcribes the whole session. Choose it in the
+same screen as the API keys (⚙ in the panel header, or **＋ Key**):
+
+| Engine | Audio leaves your machine? | Notes |
+|---|---|---|
+| **On-device Whisper** *(default)* | **No** | Runs in your browser on WebGPU. ~75 MB model downloaded once. Needs a reasonably modern GPU. |
+| Whisper Large v3 Turbo (Groq) | **Yes** | Free. Much faster and more accurate, nothing to download. |
+| Whisper Large v3 (Groq) | **Yes** | Free. Most accurate. |
+
+The dropdown states this directly under your selection — green for on-device, amber for anything
+that uploads. On-device is the default deliberately, and if a remote engine is selected but its key
+is missing, transcription **falls back to on-device** rather than failing: the worst case is slower
+transcription, never audio leaving the machine unexpectedly.
 
 ---
 
@@ -133,6 +156,7 @@ provider before it is stored**, so a bad paste fails immediately rather than sil
 |---|---|
 | You | It's your machine |
 | Anyone with access to your **unlocked Chrome profile** | `chrome.storage.local` is a plain file in the profile directory, and is also readable via devtools |
+| The offscreen page, *only* when you pick a remote transcription engine | It needs the key to upload audio. That page is privileged extension code, not a web page, and the key is dropped when the session stops. |
 | Malware running as your user | Reads the profile directory — no in-browser code can defend against this |
 | The AI provider you chose | You are authenticating to them. Keys are never cross-sent between providers. |
 
@@ -240,8 +264,8 @@ already been fixed once.
 
 | Piece | Tool |
 |---|---|
-| Transcription | Whisper (base, multilingual) via transformers.js — in-browser, WebGPU |
-| Question / study generation | Gemini (free tier) by default; Claude and OpenAI optional |
+| Transcription | Whisper (base, multilingual) via transformers.js in-browser; or Groq-hosted Whisper Large v3 |
+| Question / study generation | Gemini and Groq (both free tier); Claude and OpenAI optional |
 | UI | React 19 + TypeScript + Tailwind (Vite) |
 | Runtime | Chrome Manifest V3, `chrome.storage.local` |
 | Tests | Vitest |
@@ -260,5 +284,9 @@ already been fixed once.
 - Model availability moves. Providers retire models (`gemini-2.5-pro` now returns 404) and change
   which tiers are free. `models.js` records what was true when last verified against the live API;
   re-check before adding a model or marking one `freeTier: true`.
-- The OpenAI adapter has not been exercised against a live OpenAI key yet. Gemini and Anthropic
-  request shapes follow current official documentation.
+- Groq's free tier allows **8,000 tokens per minute** (input + output combined). The adapter caps
+  its output accordingly; a very long transcript window plus a large response can still hit the
+  limit, in which case that checkpoint is skipped and the next one retries.
+- The OpenAI adapter has not been exercised against a live OpenAI key yet. Gemini, Groq, and Groq
+  Whisper are verified against their live APIs; the Anthropic request shape follows current
+  official documentation.

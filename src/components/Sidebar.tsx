@@ -65,6 +65,7 @@ export interface SidebarProps {
   /** Verifies then stores one provider's API key. */
   onSaveKey?: (provider: string, apiKey: string) => Promise<void>;
   onRemoveKey?: (provider: string) => Promise<void>;
+  onChangeTranscriber?: (id: string) => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -90,6 +91,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onChangeModel,
   onSaveKey,
   onRemoveKey,
+  onChangeTranscriber,
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [activeTab, setActiveTab] = useState<TabId>('focus');
@@ -453,6 +455,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClose={() => setShowKeys(false)}
               onSaveKey={onSaveKey ?? (async () => {})}
               onRemoveKey={onRemoveKey ?? (async () => {})}
+              onChangeTranscriber={onChangeTranscriber}
             />
           )}
           <div style={{ display: showKeys ? 'none' : 'contents' }}>

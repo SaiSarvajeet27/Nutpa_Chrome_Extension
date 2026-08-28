@@ -9,5 +9,9 @@
 // The service worker reads this file as text and pulls out GEMINI_API_KEY — it
 // is never executed, so either `const` or `export const` works.
 const LCQ_CONFIG = {
+  // Free tier, no credit card: https://aistudio.google.com/apikey
   GEMINI_API_KEY: 'PASTE_YOUR_KEY_HERE',
+  // Free tier: https://console.groq.com/keys
+  // Powers the Groq LLM models AND remote Whisper transcription.
+  GROQ_API_KEY: 'PASTE_YOUR_KEY_HERE',
 };

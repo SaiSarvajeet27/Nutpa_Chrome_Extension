@@ -1,5 +1,14 @@
-// offscreen.js — captures tab audio and transcribes it locally with Whisper (transformers.js).
-// Runs in the extension's offscreen document. No audio ever leaves the machine.
+// offscreen.js — captures tab audio and turns it into a rolling transcript.
+// Runs in the extension's offscreen document.
+//
+// Two engines, chosen by the user (see TRANSCRIBERS in models.js):
+//   • local (DEFAULT) — Whisper via transformers.js, on-device. Audio never
+//     leaves the machine. This is the privacy promise and it stays the default.
+//   • groq            — audio is UPLOADED to Groq's Whisper endpoint. Faster and
+//     more accurate, no model download, but the audio does leave the machine.
+//     The UI must say so before anyone picks it.
+
+import { transcribeRemote } from './providers.js';
 
 // transformers.js is loaded lazily so the message listener below registers
 // immediately — otherwise the background's first message can arrive before
@@ -61,6 +70,46 @@ function onModelProgress(p) {
   for (const f in dlProgress) { loaded += dlProgress[f][0]; total += dlProgress[f][1]; }
   const pct = Math.min(99, Math.round((100 * loaded) / total));
   reportStatus('loading-model', `Downloading Whisper model… ${pct}% (first run only)`);
+}
+
+/**
+ * Which engine transcribes this session, set by the background on OFFSCREEN_START.
+ *   { provider: 'local' }                                   → on-device Whisper
+ *   { provider: 'groq', model, apiKey }                      → uploaded to Groq
+ *
+ * The API key lives here only for the life of the session. That is a widening
+ * of "keys stay in the service worker", and a deliberate one: the offscreen
+ * document is privileged EXTENSION code, not a content script, so the property
+ * that actually protects users — a key is never reachable from a web page —
+ * still holds. The alternative was shuttling ~1 MB of base64 audio per chunk
+ * through the worker, which is slower and no safer.
+ */
+let engine = { provider: 'local' };
+
+/** Float32 PCM → a 16-bit mono WAV blob, the format Groq's endpoint expects. */
+function encodeWav(samples, sampleRate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buf);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);        // PCM
+  view.setUint16(22, 1, true);        // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  str(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) {
+    const v = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
 }
 
 // Idempotent under concurrent calls (capture start + first chunk both call it).
@@ -127,7 +176,11 @@ async function startCapture(streamId) {
   await audioCtx.resume().catch(() => {});
   capturing = true;
   reportStatus('capturing', 'Listening to tab audio');
-  loadModel().catch((e) => reportStatus('error', 'Model load failed: ' + e));
+  // Only the on-device engine has a model to fetch; starting that download when
+  // the user picked a remote engine would waste ~75 MB for nothing.
+  if (engine.provider === 'local') {
+    loadModel().catch((e) => reportStatus('error', 'Model load failed: ' + e));
+  }
 }
 
 function onPCM(block) {
@@ -179,22 +232,50 @@ async function processQueue() {
   if (processing) return;
   processing = true;
   try {
-    await loadModel(); // no-op once loaded; chunks wait in the queue meanwhile
+    // Only the on-device engine needs a model download; a remote one is ready
+    // immediately, which is most of why it feels faster on a cold start.
+    if (engine.provider === 'local') await loadModel();
     while (chunkQueue.length > 0) {
       const chunk = chunkQueue.shift();
       if (rms(chunk) < SILENCE_RMS) continue; // skip silence/paused stretches
       const audio = downsample(chunk, sampleRate, TARGET_SAMPLE_RATE);
       try {
-        // language: null → Whisper auto-detects per chunk (English/Hindi/Hinglish).
-        const result = await transcriber(audio, { language: null, task: 'transcribe' });
-        const text = (result.text || '').trim();
-        if (text) transcriptParts.push(text);
+        const text = (await transcribeChunk(audio)).trim();
+        if (text && !/^[\s.,!?]*$/.test(text)) transcriptParts.push(text);
       } catch (e) {
         console.error('Transcription chunk failed:', e);
+        reportStatus('error', shortErr(e));
       }
     }
   } finally {
     processing = false;
+  }
+}
+
+function shortErr(e) {
+  return String((e && e.message) || e).slice(0, 120);
+}
+
+/** Transcribe one downsampled chunk with whichever engine is configured. */
+async function transcribeChunk(audio) {
+  if (engine.provider === 'local') {
+    // language: null → Whisper auto-detects per chunk (English/Hindi/Hinglish).
+    const result = await transcriber(audio, { language: null, task: 'transcribe' });
+    return result.text || '';
+  }
+  // Remote: a stuck upload must not wedge the queue, so bound every request.
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 25000);
+  try {
+    return await transcribeRemote({
+      provider: engine.provider,
+      model: engine.model,
+      apiKey: engine.apiKey,
+      wavBlob: encodeWav(audio, TARGET_SAMPLE_RATE),
+      signal: ctl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -238,6 +319,7 @@ function stopCapture() {
   workletNode = null; mediaStream = null; audioCtx = null; playbackCtx = null;
   pcmBuffer = []; pcmLength = 0; chunkQueue = [];
   transcriptParts = []; consumedOffset = 0;
+  engine = { provider: 'local' }; // drop any API key with the session
   reportStatus('stopped');
 }
 
@@ -245,6 +327,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.target !== 'offscreen') return;
 
   if (message.type === 'OFFSCREEN_START') {
+    engine = message.engine && message.engine.provider ? message.engine : { provider: 'local' };
+    if (engine.provider !== 'local') {
+      reportStatus('ready', `Transcribing via ${engine.label || engine.provider}`);
+    }
     startCapture(message.streamId)
       .then(() => sendResponse({ ok: true }))
       .catch((e) => { reportStatus('error', String(e)); sendResponse({ ok: false, error: String(e) }); });

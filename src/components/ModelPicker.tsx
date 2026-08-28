@@ -28,13 +28,27 @@ export interface ModelDef {
   freeTier?: boolean;
 }
 
+export interface TranscriberDef {
+  id: string;
+  provider: string;
+  label: string;
+  note: string;
+  /** TRUE means lecture audio is sent off the machine. The UI must say so. */
+  uploadsAudio: boolean;
+  freeTier?: boolean;
+}
+
 export interface SettingsState {
-  settings: { features: Record<string, { model: string; enabled: boolean }> };
+  settings: {
+    features: Record<string, { model: string; enabled: boolean }>;
+    transcription: { model: string };
+  };
   catalog: { features: FeatureDef[]; providers: Record<string, ProviderDef>; models: ModelDef[] };
+  transcribers: TranscriberDef[];
   /** Providers with a stored key. Never contains key material. */
   configured: string[];
-  /** True when a free-tier Gemini key ships with the build. */
-  bundledGemini: boolean;
+  /** Providers a bundled free key covers, e.g. { gemini: true, groq: true }. */
+  bundled: Record<string, boolean>;
 }
 
 export interface ModelPickerProps {
@@ -52,17 +66,18 @@ const OFF = '__off__';
 /**
  * Can this MODEL be used right now — not "is this provider free".
  *
- * Gemini's Flash models answer on the bundled free key; Gemini Pro does not
- * (it returns a quota error without billing). Treating the whole provider as
- * free offered Pro as though it were free and it would have failed mid-lecture.
+ * Gemini's Flash models and Groq's open models answer on a bundled free key;
+ * Gemini Pro does not (it returns a quota error without billing). Treating a
+ * whole provider as free offered Pro as though it were free, and it would have
+ * failed mid-lecture.
  */
 function modelUsable(
   model: ModelDef | undefined,
-  state: Pick<SettingsState, 'configured' | 'bundledGemini'>
+  state: Pick<SettingsState, 'configured' | 'bundled'>
 ): boolean {
   if (!model) return false;
   if (state.configured.includes(model.provider)) return true;
-  return !!(model.freeTier && model.provider === 'gemini' && state.bundledGemini);
+  return !!(model.freeTier && state.bundled[model.provider]);
 }
 
 const ModelPicker: React.FC<ModelPickerProps> = ({ featureId, state, onChange, onAddKey }) => {

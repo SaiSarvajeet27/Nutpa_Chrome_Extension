@@ -14,12 +14,15 @@ import {
   FEATURES,
   MODELS,
   PROVIDERS,
+  TRANSCRIBERS,
   DEFAULT_MODEL,
   getModel,
   loadSettings,
   saveSettings,
   groupFeaturesByModel,
   parseBundledKey,
+  getTranscriber,
+  DEFAULT_TRANSCRIBER,
 } from './models.js';
 import { getKey, setKey, listConfiguredProviders, clearKeys } from './keys.js';
 
@@ -36,19 +39,27 @@ import { getKey, setKey, listConfiguredProviders, clearKeys } from './keys.js';
 //
 // The text is parsed, never evaluated: running code out of a config file inside
 // the worker would be a needless risk for one string.
-let bundledGeminiKey = '';
+const bundled = { gemini: '', groq: '' };
 const bundledConfigReady = (async () => {
   try {
     const res = await fetch(chrome.runtime.getURL('config.js'));
     if (!res.ok) return;
-    bundledGeminiKey = parseBundledKey(await res.text());
+    const text = await res.text();
+    bundled.gemini = parseBundledKey(text, 'GEMINI_API_KEY');
+    bundled.groq = parseBundledKey(text, 'GROQ_API_KEY');
   } catch {
-    // No config.js — fine, the user can add their own Gemini key in the UI.
+    // No config.js — fine, the user can add their own keys in the UI.
   }
-  if (!bundledGeminiKey) {
-    console.info('[nupta] No bundled Gemini key; add one on the API keys screen.');
+  if (!bundled.gemini && !bundled.groq) {
+    console.info('[nupta] No bundled keys; add one on the API keys screen.');
   }
 })();
+
+/** Which providers a bundled free key covers — drives `freeTier` in the UI. */
+async function bundledMap() {
+  await bundledConfigReady;
+  return { gemini: !!bundled.gemini, groq: !!bundled.groq };
+}
 
 /**
  * Resolve the API key for a provider.
@@ -58,11 +69,8 @@ const bundledConfigReady = (async () => {
 async function resolveKey(provider) {
   const own = await getKey(provider);
   if (own) return own;
-  if (provider === 'gemini') {
-    await bundledConfigReady;
-    return bundledGeminiKey;
-  }
-  return '';
+  await bundledConfigReady;
+  return bundled[provider] || '';
 }
 
 // Session state survives service-worker restarts via chrome.storage.session
@@ -136,6 +144,26 @@ async function sendToTab(tabId, message) {
   }
 }
 
+/**
+ * Work out which transcription engine to hand the offscreen page.
+ *
+ * Falls back to on-device whenever a remote engine is selected but unusable
+ * (key removed, provider unknown). Failing closed to LOCAL is the safe
+ * direction: the worst case is slower transcription, never audio leaving the
+ * machine when the user's key situation says it shouldn't.
+ */
+async function resolveTranscriptionEngine() {
+  const settings = await loadSettings();
+  const t = getTranscriber(settings.transcription?.model) || getTranscriber(DEFAULT_TRANSCRIBER);
+  if (!t || t.provider === 'local') return { provider: 'local' };
+  const apiKey = await resolveKey(t.provider);
+  if (!apiKey) {
+    await setDegradedNote(`No ${t.provider} key — transcribing on-device instead.`);
+    return { provider: 'local' };
+  }
+  return { provider: t.provider, model: t.id, apiKey, label: t.label };
+}
+
 async function startMonitoring(tabId) {
   await getSession();
   if (session.active) await stopMonitoring();
@@ -150,7 +178,8 @@ async function startMonitoring(tabId) {
     streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
   }
   await ensureOffscreenDocument();
-  const res = await sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_START', streamId });
+  const engine = await resolveTranscriptionEngine();
+  const res = await sendToOffscreen({ target: 'offscreen', type: 'OFFSCREEN_START', streamId, engine });
   if (!res || !res.ok) throw new Error((res && res.error) || 'Offscreen capture failed to start');
   session = { ...session, active: true, tabId, lastError: '', video: { time: null, progress: null, at: 0 } };
   saveSession();
@@ -393,7 +422,8 @@ const settingsHandlers = {
     // Provider NAMES only — never key material. This is the whole boundary:
     // the UI learns that a provider is configured, never what its key is.
     configured: await listConfiguredProviders(),
-    bundledGemini: !!(await bundledConfigReady.then(() => bundledGeminiKey)),
+    bundled: await bundledMap(),
+    transcribers: TRANSCRIBERS,
   }),
   SETTINGS_SAVE: async (m) => {
     await saveSettings(m.settings);

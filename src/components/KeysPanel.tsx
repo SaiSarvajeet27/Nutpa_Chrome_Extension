@@ -1,5 +1,16 @@
 import React, { useState } from 'react';
-import type { SettingsState } from './ModelPicker';
+import type { SettingsState, TranscriberDef } from './ModelPicker';
+
+/** Local always works; a remote engine needs its provider's key. */
+function transcriberUsable(
+  t: TranscriberDef | undefined,
+  state: Pick<SettingsState, 'configured' | 'bundled'>
+): boolean {
+  if (!t) return false;
+  if (t.provider === 'local') return true;
+  if (state.configured.includes(t.provider)) return true;
+  return !!(t.freeTier && state.bundled[t.provider]);
+}
 
 /**
  * API key entry, rendered inside the widget panel — not a browser tab.
@@ -16,6 +27,8 @@ import type { SettingsState } from './ModelPicker';
 interface KeysPanelProps {
   state: SettingsState;
   onClose: () => void;
+  /** Change the transcription engine for the whole session. */
+  onChangeTranscriber?: (id: string) => void;
   /** Verifies with the provider, then stores. Rejects with a readable message. */
   onSaveKey: (provider: string, apiKey: string) => Promise<void>;
   onRemoveKey: (provider: string) => Promise<void>;
@@ -25,7 +38,13 @@ const inputCls =
   'w-full bg-[#0a0f1e] border border-[#1e293b] focus:border-[#00d4c8]/60 rounded-lg px-2.5 py-2 ' +
   'text-xs text-white placeholder-[#94a3b8]/50 outline-none transition-colors';
 
-const KeysPanel: React.FC<KeysPanelProps> = ({ state, onClose, onSaveKey, onRemoveKey }) => {
+const KeysPanel: React.FC<KeysPanelProps> = ({
+  state,
+  onClose,
+  onChangeTranscriber,
+  onSaveKey,
+  onRemoveKey,
+}) => {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ text: string; err: boolean } | null>(null);
@@ -61,14 +80,63 @@ const KeysPanel: React.FC<KeysPanelProps> = ({ state, onClose, onSaveKey, onRemo
         <span className="text-white text-xs font-semibold">API keys</span>
       </div>
 
-      <p className="text-[#94a3b8] text-[10px] leading-relaxed pb-2 flex-shrink-0">
-        Gemini is free and already set up. Add a key to unlock Claude or GPT in the model dropdowns.
-      </p>
-
       <div className="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2.5 min-h-0 pr-0.5">
+        {/* ── Transcription engine ── */}
+        <div className="bg-[#0d1b2a] border border-[#1e293b] rounded-xl p-2.5">
+          <div className="flex items-center gap-2 mb-1.5">
+            <div className="w-1 h-3 rounded-full bg-[#00d4c8]" />
+            <span className="text-white text-[11px] font-semibold">Transcription</span>
+          </div>
+          <select
+            value={state.settings.transcription?.model || ''}
+            aria-label="Transcription engine"
+            onChange={e => onChangeTranscriber?.(e.target.value)}
+            className={inputCls + ' cursor-pointer'}
+          >
+            {(state.transcribers || []).map(t => {
+              const usable = transcriberUsable(t, state);
+              return (
+                <option
+                  key={t.id}
+                  value={t.id}
+                  disabled={!usable && t.id !== state.settings.transcription?.model}
+                >
+                  {t.label}
+                  {t.provider === 'local' ? '' : usable ? '' : ' — add key'}
+                </option>
+              );
+            })}
+          </select>
+          {(() => {
+            const cur = (state.transcribers || []).find(
+              t => t.id === state.settings.transcription?.model
+            );
+            if (!cur) return null;
+            // The privacy tradeoff is the whole point of this control, so it is
+            // stated plainly under the dropdown rather than buried in a tooltip.
+            return (
+              <p
+                className={`text-[9px] leading-relaxed mt-1.5 px-1.5 py-1 rounded-md border ${
+                  cur.uploadsAudio
+                    ? 'bg-amber-500/10 border-amber-500/25 text-amber-400'
+                    : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                }`}
+              >
+                {cur.uploadsAudio
+                  ? '⚠ Lecture audio is uploaded to this provider for transcription.'
+                  : '🔒 Audio is transcribed on your device and never leaves it.'}
+              </p>
+            );
+          })()}
+        </div>
+
+        <p className="text-[#94a3b8] text-[10px] leading-relaxed">
+          Gemini and Groq are free and already set up. Add a key to unlock Claude or GPT.
+        </p>
+
         {Object.values(providers).map(p => {
           const isSet = configured.includes(p.id);
-          const freeReady = p.free && state.bundledGemini && !isSet;
+          const freeReady = p.free && state.bundled[p.id] && !isSet;
           const draft = drafts[p.id] || '';
 
           return (

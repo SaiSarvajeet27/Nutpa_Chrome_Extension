@@ -5,10 +5,23 @@
 // adapter translates. Adding a vendor means adding an entry to ADAPTERS and
 // nothing else — background.js never learns which vendor it's talking to.
 //
-// The API key is a parameter, never a module-level value: it is read from the
-// encrypted vault at call time and goes out of scope when the call returns.
+// The API key is a parameter, never a module-level value: it is read from
+// storage at call time and goes out of scope when the call returns.
 
 const MAX_OUTPUT_TOKENS = 8192; // the structured payload is small; keeps latency low
+
+/**
+ * Per-provider output cap, where the default would break the request.
+ *
+ * Groq's free tier bills INPUT + OUTPUT against one 8,000 tokens-per-minute
+ * budget, and rejects the request outright (HTTP 413) if the declared
+ * max_completion_tokens alone could exceed it. At 8192 every Groq call failed
+ * before the model saw it. A checkpoint response is a couple of questions and a
+ * handful of bullets — 2,048 is ample, and it leaves ~6,000 for the transcript,
+ * comfortably above the ~4,000 the prompt window can reach.
+ */
+const PROVIDER_OUTPUT_TOKENS = { groq: 2048 };
+const outputTokensFor = (provider) => PROVIDER_OUTPUT_TOKENS[provider] ?? MAX_OUTPUT_TOKENS;
 
 /**
  * Gemini takes a dialect of JSON Schema with uppercase type names and no
@@ -55,8 +68,14 @@ function httpError(providerLabel, status, body) {
   if (status === 401 || status === 403 || /api[_ -]?key|unauthor|permission|invalid_api/i.test(text)) {
     return new Error(`${providerLabel} rejected the API key — check it in Nupta's settings.`);
   }
-  if (status === 429 || /quota|rate.?limit|insufficient_quota/i.test(text)) {
-    return new Error(`${providerLabel} rate limit or quota reached — try again shortly.`);
+  if (status === 413 || /request too large|reduce your message size/i.test(text)) {
+    return new Error(
+      `${providerLabel} rejected the request as too large for its free tier — ` +
+        'the next checkpoint uses a shorter transcript window.'
+    );
+  }
+  if (status === 429 || /quota|rate.?limit|insufficient_quota|tokens per minute/i.test(text)) {
+    return new Error(`${providerLabel} rate limit reached — the next checkpoint will retry.`);
   }
   if (status === 402 || /billing|credit|payment/i.test(text)) {
     return new Error(`${providerLabel} reports a billing problem on your account.`);
@@ -81,7 +100,8 @@ export function redactKeys(text) {
   return String(text || '')
     .replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, 'sk-ant-[REDACTED]')
     .replace(/sk-(?:proj-)?[A-Za-z0-9_-]{8,}/g, 'sk-[REDACTED]')
-    .replace(/AIza[A-Za-z0-9_-]{8,}/g, 'AIza[REDACTED]');
+    .replace(/AIza[A-Za-z0-9_-]{8,}/g, 'AIza[REDACTED]')
+    .replace(/gsk_[A-Za-z0-9_-]{8,}/g, 'gsk_[REDACTED]');
 }
 
 async function readError(resp) {
@@ -195,9 +215,66 @@ async function generateOpenAI({ apiKey, model, system, prompt, schema }) {
   return parseJsonLoose(choice?.message?.content, 'OpenAI');
 }
 
+/**
+ * Groq speaks the OpenAI Chat Completions dialect, so this mirrors the OpenAI
+ * adapter — but it is a SEPARATE function rather than a shared one with a
+ * base-URL switch, because the two diverge in ways that matter: Groq always
+ * wants `max_completion_tokens`, has its own error vocabulary, and its model ids
+ * carry vendor prefixes (`openai/gpt-oss-120b`) that must be sent verbatim.
+ */
+async function generateGroq({ apiKey, model, system, prompt, schema }) {
+  const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      max_completion_tokens: outputTokensFor('groq'),
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: prompt },
+      ],
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'nupta_checkpoint', strict: true, schema },
+      },
+    }),
+  });
+  if (!resp.ok) throw httpError('Groq', resp.status, await readError(resp));
+  const data = await resp.json();
+  return parseJsonLoose(data?.choices?.[0]?.message?.content, 'Groq');
+}
+
+/**
+ * Remote speech-to-text (Groq Whisper).
+ *
+ * Takes a WAV the offscreen page has already encoded from captured PCM, and
+ * returns plain text. `signal` lets a caller abandon a chunk that is taking too
+ * long rather than stalling the whole transcript.
+ */
+export async function transcribeRemote({ provider, model, apiKey, wavBlob, signal }) {
+  if (provider !== 'groq') throw new Error(`Unknown transcription provider: ${provider}`);
+  const form = new FormData();
+  form.append('file', wavBlob, 'audio.wav');
+  form.append('model', model);
+  form.append('response_format', 'json');
+  // Nudges Whisper away from hallucinating punctuation-only output on silence.
+  form.append('temperature', '0');
+
+  const resp = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+    signal,
+  });
+  if (!resp.ok) throw httpError('Groq', resp.status, await readError(resp));
+  const data = await resp.json();
+  return typeof data?.text === 'string' ? data.text : '';
+}
+
 const ADAPTERS = {
   gemini: generateGemini,
   anthropic: generateAnthropic,
+  groq: generateGroq,
   openai: generateOpenAI,
 };
 
@@ -234,6 +311,13 @@ export async function verifyKey(provider, apiKey) {
       },
     });
     if (!r.ok) throw httpError('Claude', r.status, await readError(r));
+    return true;
+  }
+  if (provider === 'groq') {
+    const r = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!r.ok) throw httpError('Groq', r.status, await readError(r));
     return true;
   }
   if (provider === 'openai') {

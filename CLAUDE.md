@@ -51,10 +51,20 @@ video ─content script (all frames)→ every 2 min → background service worke
   Runtime + wasm live in `extension/libs/` (committed; large but under GitHub's 100 MB/file limit).
 - **One Gemini call per checkpoint** returns quiz + summary + concepts + flashcards together
   (structured `responseSchema`). This keeps everything inside the free tier (~30 calls/hr).
-- **Free tier is per MODEL, not per provider** (`modelUsable()` in models.js). Gemini *Flash*
-  models answer on the bundled key; Gemini *Pro* returns 429 without billing, so it needs the
-  user's own key like Claude and GPT. Verify against the live API before marking a new model
+- **Free tier is per MODEL, not per provider** (`modelUsable()` in models.js). Gemini *Flash* and
+  all Groq models answer on a bundled key; Gemini *Pro* returns 429 without billing, so it needs
+  the user's own key like Claude and GPT. Verify against the live API before marking a new model
   `freeTier: true` — do not infer it from the provider.
+- **Transcription is a separate axis** (`TRANSCRIBERS`): one engine per session, not per feature.
+  `local` (on-device Whisper) is the default and the privacy promise; the Groq engines UPLOAD
+  audio, so every remote entry carries `uploadsAudio: true` and the UI must show it.
+  `resolveTranscriptionEngine()` fails **closed to local** when a remote engine has no key —
+  the worst case must be slower transcription, never unexpected upload.
+- **Groq's free tier is 8,000 tokens/minute for input + output combined**, and rejects a request
+  whose declared `max_completion_tokens` alone could exceed it (HTTP 413). `PROVIDER_OUTPUT_TOKENS`
+  in providers.js caps Groq at 2,048 for exactly this reason — the default 8,192 made every Groq
+  call fail before the model saw it. Only models verified to honour a **strict** `json_schema` are
+  in the catalog (`qwen3.6-27b` fails validation, `groq/compound*` reject it outright).
 - **Subtopic detection is an AI judgment, not a timer** — Gemini decides if a subtopic *concluded*.
 
 ---

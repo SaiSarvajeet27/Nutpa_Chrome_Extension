@@ -16,6 +16,11 @@ const {
   groupFeaturesByModel, defaultSettings, loadSettings, FEATURES, MODELS, getModel, parseBundledKey,
   DEFAULT_MODEL,
   modelUsable,
+  PROVIDERS,
+  TRANSCRIBERS,
+  getTranscriber,
+  transcriberUsable,
+  DEFAULT_TRANSCRIBER,
 } = await import('./models.js');
 const { buildRequest, normalize } = await import('./checkpoint.js');
 
@@ -121,9 +126,9 @@ describe('loadSettings', () => {
 });
 
 describe('model catalog', () => {
-  it('maps every model to a known provider', () => {
+  it('maps every model to a provider that actually exists', () => {
     for (const m of MODELS) {
-      expect(['gemini', 'anthropic', 'openai']).toContain(m.provider);
+      expect(Object.keys(PROVIDERS), m.id).toContain(m.provider);
     }
   });
 
@@ -292,8 +297,8 @@ describe('parseBundledKey', () => {
 });
 
 describe('modelUsable — free tier is per model, not per provider', () => {
-  const bundled = { configured: [], bundledGemini: true };
-  const nothing = { configured: [], bundledGemini: false };
+  const bundled = { configured: [], bundled: { gemini: true, groq: true } };
+  const nothing = { configured: [], bundled: {} };
   const m = (id) => getModel(id);
 
   it('lets the bundled key run every free-tier Gemini model', () => {
@@ -309,14 +314,14 @@ describe('modelUsable — free tier is per model, not per provider', () => {
   });
 
   it('unlocks Gemini Pro once the user adds their own Gemini key', () => {
-    expect(modelUsable(m('gemini-3.1-pro-preview'), { configured: ['gemini'], bundledGemini: true })).toBe(true);
+    expect(modelUsable(m('gemini-3.1-pro-preview'), { configured: ['gemini'], bundled: { gemini: true } })).toBe(true);
   });
 
   it('never offers Claude or GPT without a user key', () => {
     for (const id of ['claude-opus-5', 'gpt-5.2']) {
       expect(modelUsable(m(id), bundled), id).toBe(false);
     }
-    expect(modelUsable(m('claude-opus-5'), { configured: ['anthropic'], bundledGemini: true })).toBe(true);
+    expect(modelUsable(m('claude-opus-5'), { configured: ['anthropic'], bundled: { gemini: true } })).toBe(true);
   });
 
   it('offers nothing when there is no bundled key and no user key', () => {
@@ -330,5 +335,84 @@ describe('modelUsable — free tier is per model, not per provider', () => {
   it('has no model referencing a retired id', () => {
     // gemini-2.5-pro now 404s ("no longer available to new users").
     expect(MODELS.find((x) => x.id === 'gemini-2.5-pro')).toBeUndefined();
+  });
+});
+
+describe('Groq models', () => {
+  const bundled = { configured: [], bundled: { gemini: true, groq: true } };
+
+  it('offers every Groq model on the bundled free key', () => {
+    // Only models VERIFIED to honour a strict json_schema are in the catalog;
+    // the engine cannot work without structured output.
+    const groq = MODELS.filter((m) => m.provider === 'groq');
+    expect(groq.length).toBeGreaterThan(0);
+    for (const m of groq) expect(modelUsable(m, bundled), m.id).toBe(true);
+  });
+
+  it('excludes models that cannot do strict json_schema', () => {
+    // qwen3.6-27b fails schema validation; groq/compound* reject json_schema.
+    const ids = MODELS.map((m) => m.id);
+    expect(ids).not.toContain('qwen/qwen3.6-27b');
+    expect(ids.some((i) => i.startsWith('groq/compound'))).toBe(false);
+  });
+
+  it('keeps Groq model ids with their vendor prefix intact', () => {
+    // These are sent verbatim; stripping the prefix would 404.
+    expect(MODELS.find((m) => m.id === 'openai/gpt-oss-120b')?.provider).toBe('groq');
+  });
+});
+
+describe('transcription engines', () => {
+  const bundled = { configured: [], bundled: { groq: true } };
+  const nothing = { configured: [], bundled: {} };
+
+  it('defaults to on-device, which never uploads audio', () => {
+    const t = getTranscriber(DEFAULT_TRANSCRIBER);
+    expect(t.provider).toBe('local');
+    expect(t.uploadsAudio).toBe(false);
+    expect(defaultSettings().transcription.model).toBe(DEFAULT_TRANSCRIBER);
+  });
+
+  it('keeps on-device usable even with no keys at all', () => {
+    expect(transcriberUsable(getTranscriber(DEFAULT_TRANSCRIBER), nothing)).toBe(true);
+  });
+
+  it('needs a key for every engine that uploads audio', () => {
+    for (const t of TRANSCRIBERS.filter((x) => x.uploadsAudio)) {
+      expect(transcriberUsable(t, nothing), t.id).toBe(false);
+      expect(transcriberUsable(t, bundled), t.id).toBe(true);
+    }
+  });
+
+  it('flags exactly the remote engines as uploading audio', () => {
+    for (const t of TRANSCRIBERS) {
+      expect(t.uploadsAudio, t.id).toBe(t.provider !== 'local');
+    }
+  });
+
+  it('migrates a stored transcriber that no longer exists', async () => {
+    store['nupta:settings'] = { v: 2, transcription: { model: 'whisper-that-was-removed' } };
+    expect((await loadSettings()).transcription.model).toBe(DEFAULT_TRANSCRIBER);
+  });
+
+  it('gives settings saved before transcription existed a default', async () => {
+    store['nupta:settings'] = { v: 1, features: {} };  // pre-transcription blob
+    expect((await loadSettings()).transcription.model).toBe(DEFAULT_TRANSCRIBER);
+  });
+});
+
+describe('parseBundledKey field selection', () => {
+  const cfg = [
+    'export const C = {',
+    "  GEMINI_API_KEY: 'AIzaGGGGGGGGGGGGGGGGGGGG',",
+    "  GROQ_API_KEY: 'gsk_QQQQQQQQQQQQQQQQQQQQ',",
+    '};',
+  ].join('\n');
+  it('pulls each provider key independently', () => {
+    expect(parseBundledKey(cfg, 'GEMINI_API_KEY')).toBe('AIzaGGGGGGGGGGGGGGGGGGGG');
+    expect(parseBundledKey(cfg, 'GROQ_API_KEY')).toBe('gsk_QQQQQQQQQQQQQQQQQQQQ');
+  });
+  it('returns empty for a field that is absent', () => {
+    expect(parseBundledKey("const C = { GEMINI_API_KEY: 'AIzaX0000000000000000' };", 'GROQ_API_KEY')).toBe('');
   });
 });
