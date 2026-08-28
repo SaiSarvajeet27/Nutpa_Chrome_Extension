@@ -70,6 +70,13 @@ const IDLE_POLL_START_MS = 2000;
 const IDLE_POLL_MAX_MS = 30000;
 const IDLE_BACKOFF = 1.6;
 
+/**
+ * Whisper states worth putting on screen. Everything else — `ready`,
+ * `capturing`, `idle`, `stopped` — means the engine is working as intended and
+ * needs no commentary.
+ */
+const ENGINE_STATUS_SHOWN = new Set(['loading-model', 'error']);
+
 const ContentApp: React.FC = () => {
   const [questions, setQuestions] = useState<FocusQuestion[] | null>(null);
   const [monitoring, setMonitoring] = useState(false);
@@ -227,10 +234,14 @@ const ContentApp: React.FC = () => {
               const active = !!res.activeHere;
               setMonitoring(active);
               const w = res.session.whisper || {};
-              const whisperLine =
-                w.status && w.status !== 'idle' && w.status !== 'stopped' ? w.detail || w.status : '';
+              // Only surface states the student can do something about — model
+              // download progress, and failures. "ready" and "capturing" are
+              // just "everything is fine", and showing them left a permanent
+              // "Whisper ready (WebGPU)" sitting under the panel for the whole
+              // lecture. Silence is the healthy state.
+              const whisperLine = ENGINE_STATUS_SHOWN.has(w.status) ? w.detail || w.status : '';
               // A hard failure outranks a degradation notice, which outranks
-              // the routine "listening" line.
+              // model-loading progress.
               setEngineStatus(res.session.lastError || res.session.notice || whisperLine);
               const v = res.session.video || {};
               remoteTimeRef.current = typeof v.time === 'number' ? v.time : null;
